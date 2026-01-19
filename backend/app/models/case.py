@@ -119,3 +119,4 @@ class Query(Base):
     case = relationship("Case", back_populates="queries")
 
 
+

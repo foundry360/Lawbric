@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./legalai.db"
     
+    # Supabase
+    SUPABASE_URL: str = ""
+    SUPABASE_KEY: str = ""
+    SUPABASE_SERVICE_KEY: str = ""  # Service role key for backend operations
+    
     # Vector Database
     VECTOR_DB_TYPE: str = "chroma"  # Options: pinecone, weaviate, chroma
     PINECONE_API_KEY: str = ""
@@ -64,5 +69,6 @@ settings = Settings()
 
 # Ensure upload directory exists
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+
 
 

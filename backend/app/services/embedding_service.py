@@ -72,3 +72,4 @@ class EmbeddingService:
         return embeddings.tolist()
 
 
+
