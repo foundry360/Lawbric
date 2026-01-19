@@ -67,7 +67,7 @@ export default function DocumentList({
       <div className="overflow-y-auto">
         {documents.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
-                    <FileText className="w-12 h-12 mx-auto mb-2" style={{ color: '#000000' }} />
+                    <FileText className="w-12 h-12 mx-auto mb-2 text-gray-600" />
             <p className="text-sm">No documents yet</p>
           </div>
         ) : (
@@ -81,7 +81,7 @@ export default function DocumentList({
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <FileText className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: '#000000' }} />
+                  <FileText className="w-5 h-5 mt-0.5 flex-shrink-0 text-gray-600" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 min-w-0">
                       <p className="text-xs font-medium text-gray-900 truncate flex-1 min-w-0">

@@ -19,9 +19,27 @@ export default function LoginForm() {
 
     try {
       await login(email, password)
-      router.push('/dashboard')
+      // Small delay to ensure state is updated
+      setTimeout(() => {
+        router.push('/dashboard')
+      }, 100)
     } catch (err: any) {
-      setError(err.message || 'Login failed')
+      console.error('Login error:', err)
+      // Show user-friendly error messages
+      let errorMessage = err.message || 'Login failed'
+      
+      // Handle common Supabase errors
+      if (errorMessage.includes('Email not confirmed')) {
+        errorMessage = 'Please check your email and confirm your account before signing in.'
+      } else if (errorMessage.includes('Invalid login')) {
+        errorMessage = 'Invalid email or password. If this is your first time, an account will be created.'
+      } else if (errorMessage.includes('User already registered')) {
+        errorMessage = 'An account with this email already exists. Please sign in instead.'
+      } else if (errorMessage.includes('Password')) {
+        errorMessage = 'Password must be at least 6 characters long.'
+      }
+      
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -71,7 +89,7 @@ export default function LoginForm() {
           {loading ? 'Logging in...' : 'Login'}
         </button>
         <p className="text-sm text-gray-500 text-center">
-          For MVP: Any email/password will create a new account
+          Need access? Contact your administrator to create an account.
         </p>
       </form>
     </div>

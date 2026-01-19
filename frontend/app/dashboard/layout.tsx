@@ -51,14 +51,19 @@ export default function DashboardLayout({
 
   useEffect(() => {
     // Allow dev bypass users to access dashboard
-    const devBypass = localStorage.getItem('devBypass') === 'true'
-    // Only redirect if we're sure there's no user and no dev bypass
-    if (!loading && !user && !devBypass) {
-      // Small delay to avoid flash
-      const timer = setTimeout(() => {
-        router.push('/')
-      }, 100)
-      return () => clearTimeout(timer)
+    try {
+      const devBypass = typeof window !== 'undefined' && localStorage.getItem('devBypass') === 'true'
+      // Only redirect if we're sure there's no user and no dev bypass
+      if (!loading && !user && !devBypass) {
+        // Small delay to avoid flash
+        const timer = setTimeout(() => {
+          router.push('/')
+        }, 100)
+        return () => clearTimeout(timer)
+      }
+    } catch (e) {
+      // localStorage might not be available
+      console.warn('localStorage access failed in dashboard layout:', e)
     }
   }, [user, loading, router])
 
@@ -152,12 +157,23 @@ export default function DashboardLayout({
           </button>
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <p className="text-sm font-medium text-gray-900">{user?.email || 'Development User'}</p>
-              <p className="text-xs text-gray-600 capitalize">{user?.role || 'attorney'}</p>
+              <p className="text-sm font-medium text-gray-900">{user?.full_name || user?.email || 'Development User'}</p>
+              <p className="text-xs text-gray-600 capitalize">{user?.title || user?.role || 'attorney'}</p>
             </div>
-            <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold">
-              {(user?.email || 'DU')[0].toUpperCase()}
-            </div>
+            {user?.avatar_url ? (
+              <div className="relative w-10 h-10 rounded-full overflow-hidden border-2 border-gray-200">
+                <Image
+                  src={user.avatar_url}
+                  alt="Profile avatar"
+                  fill
+                  className="object-cover"
+                />
+              </div>
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold">
+                {((user?.full_name || user?.email || 'DU')[0]).toUpperCase()}
+              </div>
+            )}
           </div>
         </div>
       </header>

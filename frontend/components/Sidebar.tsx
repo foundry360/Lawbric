@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useRouter, usePathname } from 'next/navigation'
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, LayoutDashboard, Clock, Briefcase, Sliders, Folder, FolderOpen } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, LayoutDashboard, Clock, Briefcase, Sliders, FolderClosed, FolderOpen, Share2, Shield } from 'lucide-react'
 import { casesApi, queriesApi, Case, Query } from '@/lib/api'
 
 export default function Sidebar() {
@@ -213,6 +213,58 @@ export default function Sidebar() {
           </a>
         )}
 
+        {/* Sharing Center */}
+        {isCollapsed ? (
+          <a
+            href="/dashboard/sharing"
+            className={`flex items-center justify-center px-4 py-3 mb-1 rounded-lg ${
+              pathname === '/dashboard/sharing' 
+                ? 'text-[#000000] bg-gray-200' 
+                : 'text-[#000000] hover:bg-gray-200'
+            }`}
+            title="Sharing Center"
+          >
+            <Share2 className="w-5 h-5" style={{ color: '#000000' }} />
+          </a>
+        ) : (
+          <a
+            href="/dashboard/sharing"
+            className={`flex items-center px-3 py-1 mb-1 text-[12px] font-semibold uppercase tracking-wider ${
+              pathname === '/dashboard/sharing' 
+                ? 'text-[#000000] border-l-4 border-[#000000] bg-gray-200' 
+                : 'text-gray-500 hover:text-[#000000] hover:bg-gray-200 border-l-4 border-transparent'
+            }`}
+          >
+            <span>Sharing Center</span>
+          </a>
+        )}
+
+        {/* Vault */}
+        {isCollapsed ? (
+          <a
+            href="/dashboard/vault"
+            className={`flex items-center justify-center px-4 py-3 mb-1 rounded-lg ${
+              pathname === '/dashboard/vault' 
+                ? 'text-[#000000] bg-gray-200' 
+                : 'text-[#000000] hover:bg-gray-200'
+            }`}
+            title="Vault"
+          >
+            <Shield className="w-5 h-5" style={{ color: '#000000' }} />
+          </a>
+        ) : (
+          <a
+            href="/dashboard/vault"
+            className={`flex items-center px-3 py-1 mb-1 text-[12px] font-semibold uppercase tracking-wider ${
+              pathname === '/dashboard/vault' 
+                ? 'text-[#000000] border-l-4 border-[#000000] bg-gray-200' 
+                : 'text-gray-500 hover:text-[#000000] hover:bg-gray-200 border-l-4 border-transparent'
+            }`}
+          >
+            <span>Vault</span>
+          </a>
+        )}
+
         {/* Divider */}
         {!isCollapsed && (
           <div className="border-t border-gray-200 my-[10px]"></div>
@@ -276,7 +328,7 @@ export default function Sidebar() {
             className="flex items-center justify-center px-4 py-3 mb-1 rounded-lg text-[#000000] hover:bg-gray-200"
             title="Cases"
           >
-            <Folder className="w-5 h-5" style={{ color: '#000000' }} />
+            <FolderClosed className="w-5 h-5 text-gray-600" />
           </a>
         ) : (
           <div className="mb-[10px]">
@@ -322,9 +374,9 @@ export default function Sidebar() {
                         }`}
                       >
                         {isActive ? (
-                          <FolderOpen className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#000000' }} />
+                          <FolderOpen className="w-4 h-4 flex-shrink-0 mt-0.5 text-gray-600" />
                         ) : (
-                          <Folder className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#000000' }} />
+                          <FolderClosed className="w-4 h-4 flex-shrink-0 mt-0.5 text-gray-600" />
                         )}
                         <div className="flex-1 min-w-0">
                             <div className="font-medium truncate">

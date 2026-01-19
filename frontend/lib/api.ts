@@ -12,11 +12,19 @@ const api = axios.create({
 
 // Add auth token to requests
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token && !token.startsWith('dev-token-')) {
-    config.headers.Authorization = `Bearer ${token}`
+  try {
+    // Get Supabase session token
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (token) {
+      // Only send Supabase tokens (not dev tokens)
+      // Supabase tokens are JWT tokens, not user IDs
+      if (!token.startsWith('dev-token-') && token.length > 50) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+    }
+  } catch (e) {
+    // localStorage might not be available
   }
-  // For dev bypass, don't send auth header
   return config
 })
 
@@ -24,12 +32,16 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    const devBypass = localStorage.getItem('devBypass') === 'true'
-    if (devBypass && (error.code === 'ECONNREFUSED' || error.message?.includes('Network Error') || !error.response)) {
-      // Return mock data for development
-      console.warn('Backend unavailable, using mock data')
-      // Mark error as dev bypass so components can handle it
-      error.isDevBypass = true
+    try {
+      const devBypass = typeof window !== 'undefined' && localStorage.getItem('devBypass') === 'true'
+      if (devBypass && (error.code === 'ECONNREFUSED' || error.message?.includes('Network Error') || !error.response)) {
+        // Return mock data for development
+        console.warn('Backend unavailable, using mock data')
+        // Mark error as dev bypass so components can handle it
+        error.isDevBypass = true
+      }
+    } catch (e) {
+      // localStorage might not be available
     }
     return Promise.reject(error)
   }
@@ -64,6 +76,12 @@ export interface Document {
   requires_ocr?: boolean
   uploaded_at: string
   view_count?: number
+  metadata?: {
+    custodian?: string
+    document_date?: string
+    source?: string
+    [key: string]: any
+  }
 }
 
 export interface Citation {
@@ -131,5 +149,23 @@ export const queriesApi = {
     api.post<Query>('/api/v1/queries', data),
   list: (caseId: number) => api.get<Query[]>(`/api/v1/queries?case_id=${caseId}`),
   get: (id: number) => api.get<Query>(`/api/v1/queries/${id}`),
+}
+
+export interface AppUser {
+  id: string  // UUID from Supabase
+  email: string
+  full_name?: string
+  role: string  // user or admin (permissions)
+  title?: string  // attorney, paralegal, finance, etc. (job title)
+  avatar_url?: string  // URL to profile avatar in Supabase storage
+  is_active: boolean
+}
+
+export const usersApi = {
+  list: () => api.get<AppUser[]>('/api/v1/users'),
+  create: (data: { email: string; password: string; full_name?: string; role: string; title: string }) =>
+    api.post<AppUser>('/api/v1/users', data),
+  delete: (id: string) => api.delete(`/api/v1/users/${id}`),
+  deactivate: (id: string) => api.patch<AppUser>(`/api/v1/users/${id}/deactivate`),
 }
 
