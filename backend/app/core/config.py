@@ -5,6 +5,7 @@ Application configuration using Pydantic settings
 from pydantic_settings import BaseSettings
 from typing import List
 import os
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -55,13 +56,25 @@ class Settings(BaseSettings):
     ENCRYPT_FILES: bool = True
     CASE_ISOLATION_ENABLED: bool = True
     
+    # Google OAuth
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://localhost:3000/connected-apps/callback"
+    
     # Chunking
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     
     class Config:
-        env_file = ".env"
+        # Look for .env file in the backend directory
+        # Path: backend/app/core/config.py -> backend/.env
+        # Use absolute path to ensure we find the file
+        _backend_dir = Path(__file__).parent.parent.parent
+        env_file = str(_backend_dir / ".env")
+        env_file_encoding = "utf-8"
         case_sensitive = True
+        # Reload .env file on each access (for development)
+        # In production, settings are loaded once at startup
 
 
 # Create settings instance

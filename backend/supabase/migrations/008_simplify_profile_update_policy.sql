@@ -23,3 +23,4 @@ CREATE POLICY "Users can update own profile"
 -- Also create a separate policy for admins (if needed later)
 -- For now, we'll keep it simple and allow users to update their own profiles only
 
+

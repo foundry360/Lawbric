@@ -87,7 +87,7 @@ class DocumentChunk(Base):
     embedding_id = Column(String, nullable=True, index=True)  # ID in vector DB
     
     # Metadata for retrieval
-    metadata = Column(Text, nullable=True)  # JSON string with additional metadata
+    chunk_metadata = Column(Text, nullable=True)  # JSON string with additional metadata
     
     # Relationships
     document = relationship("Document", back_populates="chunks")
@@ -117,6 +117,7 @@ class Query(Base):
     
     # Relationships
     case = relationship("Case", back_populates="queries")
+
 
 
 

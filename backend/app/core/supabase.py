@@ -20,3 +20,4 @@ def get_supabase_client() -> Client | None:
     return supabase
 
 
+
