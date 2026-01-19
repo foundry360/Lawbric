@@ -35,12 +35,13 @@ class VectorStore:
         """Initialize ChromaDB"""
         try:
             import chromadb
-            from chromadb.config import Settings
+            import os
             
-            self._client = chromadb.Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory="./vector_db"
-            ))
+            # Use PersistentClient for the new ChromaDB API
+            persist_directory = "./vector_db"
+            os.makedirs(persist_directory, exist_ok=True)
+            
+            self._client = chromadb.PersistentClient(path=persist_directory)
             
             # Get or create collection
             self.collection = self._client.get_or_create_collection(

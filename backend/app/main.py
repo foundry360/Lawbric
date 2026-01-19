@@ -33,11 +33,51 @@ async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
     logger.info("Starting Legal Discovery AI Platform...")
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database initialized")
+    # #region agent log
+    import json
+    from datetime import datetime
+    log_path = r"c:\LegalAI\.cursor\debug.log"
+    try:
+        with open(log_path, "a") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"E","location":"main.py:35","message":"Lifespan startup beginning","data":{},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database initialized")
+        # #region agent log
+        try:
+            with open(log_path, "a") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"E","location":"main.py:42","message":"Database metadata created","data":{},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+    except Exception as e:
+        # #region agent log
+        try:
+            with open(log_path, "a") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"E","location":"main.py:47","message":"Database creation failed","data":{"error":str(e)},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        raise
+
+    # #region agent log
+    try:
+        with open(log_path, "a") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"E","location":"main.py:50","message":"Lifespan startup complete, yielding","data":{},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    
     yield
+    
     # Shutdown
     logger.info("Shutting down Legal Discovery AI Platform...")
+    # #region agent log
+    try:
+        with open(log_path, "a") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"shutdown","hypothesisId":"E","location":"main.py:58","message":"Lifespan shutdown","data":{},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+    except: pass
+    # #endregion
 
 
 # Create FastAPI app
