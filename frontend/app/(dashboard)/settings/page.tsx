@@ -14,7 +14,7 @@ type SettingsTab = 'account' | 'notifications' | 'appearance' | 'users'
 
 export default function SettingsPage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, refreshUser } = useAuth()
   const [activeTab, setActiveTab] = useState<SettingsTab>('account')
   const [notifications, setNotifications] = useState(true)
   const [emailUpdates, setEmailUpdates] = useState(false)
@@ -22,6 +22,10 @@ export default function SettingsPage() {
   const [displayUser, setDisplayUser] = useState(user) // Local state to hold fresh profile data
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+  const [showReplaceAvatarModal, setShowReplaceAvatarModal] = useState(false)
+  const [pendingAvatarFile, setPendingAvatarFile] = useState<File | null>(null)
+  const [showErrorModal, setShowErrorModal] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const isAdmin = user?.role === 'admin' || user?.role === 'ADMIN'
@@ -60,24 +64,61 @@ export default function SettingsPage() {
   // Use displayUser for rendering (has fresh profile data) or fall back to user from context
   const userToDisplay = displayUser || user
 
-  // Handle avatar upload
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle avatar file selection
+  const handleAvatarFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file || !user?.id) return
+    if (!file || !user?.id) {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+      return
+    }
 
     // Validate file type
     if (!file.type.startsWith('image/')) {
-      alert('Please select an image file')
+      setPendingAvatarFile(null)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+      // Show error modal
+      setErrorMessage('Please select an image file')
+      setShowErrorModal(true)
       return
     }
 
     // Validate file size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
-      alert('Image size must be less than 5MB')
+      setPendingAvatarFile(null)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+      // Show error modal
+      setErrorMessage('Image size must be less than 5MB')
+      setShowErrorModal(true)
       return
     }
 
+    // If avatar already exists, show confirmation modal
+    if (displayUser?.avatar_url) {
+      setPendingAvatarFile(file)
+      setShowReplaceAvatarModal(true)
+    } else {
+      // No existing avatar, proceed directly with upload
+      processAvatarUpload(file)
+    }
+  }
+
+  // Process avatar upload
+  const processAvatarUpload = async (file: File) => {
+    if (!file || !user?.id) return
+
     setUploadingAvatar(true)
+    setShowReplaceAvatarModal(false)
+    setPendingAvatarFile(null)
+    
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
     
     try {
       // Create preview
@@ -147,8 +188,8 @@ export default function SettingsPage() {
         if (profileUser) {
           setDisplayUser(profileUser)
           // Update auth context user
-          if (typeof window !== 'undefined') {
-            window.location.reload() // Simple way to refresh user context
+          if (refreshUser) {
+            await refreshUser()
           }
         }
       }
@@ -156,7 +197,8 @@ export default function SettingsPage() {
       setAvatarPreview(null) // Clear preview after successful upload
     } catch (error: any) {
       console.error('Error uploading avatar:', error)
-      alert(`Failed to upload avatar: ${error.message || 'Unknown error'}`)
+      setErrorMessage(`Failed to upload avatar: ${error.message || 'Unknown error'}`)
+      setShowErrorModal(true)
       setAvatarPreview(null)
     } finally {
       setUploadingAvatar(false)
@@ -166,13 +208,25 @@ export default function SettingsPage() {
     }
   }
 
+  // Handle confirm replace avatar
+  const handleConfirmReplaceAvatar = () => {
+    if (pendingAvatarFile) {
+      processAvatarUpload(pendingAvatarFile)
+    }
+  }
+
+  // Handle cancel replace avatar
+  const handleCancelReplaceAvatar = () => {
+    setShowReplaceAvatarModal(false)
+    setPendingAvatarFile(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
   // Handle remove avatar
   const handleRemoveAvatar = async () => {
     if (!user?.id || !displayUser?.avatar_url) return
-
-    if (!confirm('Are you sure you want to remove your profile picture?')) {
-      return
-    }
 
     setUploadingAvatar(true)
 
@@ -205,13 +259,18 @@ export default function SettingsPage() {
         const profileUser = await mapSupabaseUserWithProfile(currentUser)
         if (profileUser) {
           setDisplayUser(profileUser)
+          // Update auth context user
+          if (refreshUser) {
+            await refreshUser()
+          }
         }
       }
 
       setAvatarPreview(null)
     } catch (error: any) {
       console.error('Error removing avatar:', error)
-      alert(`Failed to remove avatar: ${error.message || 'Unknown error'}`)
+      setErrorMessage(`Failed to remove avatar: ${error.message || 'Unknown error'}`)
+      setShowErrorModal(true)
     } finally {
       setUploadingAvatar(false)
     }
@@ -236,7 +295,7 @@ export default function SettingsPage() {
       <div className="border-b border-gray-200 px-6 py-4">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => router.push('/dashboard')}
+            onClick={() => router.push('/workspace')}
             className="p-2 rounded-lg hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors"
             title="Back to Dashboard"
           >
@@ -329,7 +388,7 @@ export default function SettingsPage() {
                             ref={fileInputRef}
                             accept="image/*"
                             className="hidden"
-                            onChange={handleAvatarUpload}
+                            onChange={handleAvatarFileSelect}
                           />
                           <button
                             type="button"
@@ -364,10 +423,9 @@ export default function SettingsPage() {
                             type="button"
                             onClick={handleRemoveAvatar}
                             disabled={uploadingAvatar}
-                            className="px-3 py-1.5 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                            className="px-3 py-1.5 text-xs border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            <X className="w-3 h-3" />
-                            Remove
+                            Replace Image
                           </button>
                         )}
                       </div>
@@ -1071,6 +1129,84 @@ function UserManagementSection() {
           </div>
         </div>
       )}
+
+      {/* Replace Avatar Confirmation Modal */}
+      {showReplaceAvatarModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-lg font-bold mb-4 text-gray-900">Replace Profile Picture</h3>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                You already have a profile picture. Do you want to replace it with a new one?
+              </p>
+              {pendingAvatarFile && (
+                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden">
+                    {pendingAvatarFile.type.startsWith('image/') && (
+                      <img
+                        src={URL.createObjectURL(pendingAvatarFile)}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-900">{pendingAvatarFile.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {(pendingAvatarFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={handleCancelReplaceAvatar}
+                  disabled={uploadingAvatar}
+                  className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmReplaceAvatar}
+                  disabled={uploadingAvatar}
+                  className="flex-1 px-4 py-2 text-sm bg-black text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-black"
+                >
+                  {uploadingAvatar ? 'Uploading...' : 'Replace Picture'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Modal */}
+      {showErrorModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-lg font-bold mb-4 text-gray-900">Error</h3>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                {errorMessage}
+              </p>
+              <div className="flex justify-end pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowErrorModal(false)
+                    setErrorMessage('')
+                  }}
+                  className="px-4 py-2 text-sm bg-black text-white rounded-lg hover:bg-gray-900"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

@@ -30,3 +30,4 @@ if ($portCheck) {
 Write-Host "`nStarting Next.js dev server..." -ForegroundColor Cyan
 Write-Host "Run: npm run dev" -ForegroundColor Yellow
 
+

@@ -23,3 +23,4 @@ if (Test-Path .env.local) {
 Write-Host "`n✅ Ready to restart dev server" -ForegroundColor Green
 Write-Host "Run: npm run dev" -ForegroundColor Cyan
 
+

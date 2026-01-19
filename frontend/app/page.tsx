@@ -12,7 +12,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!loading && user) {
-      router.push('/dashboard')
+      router.push('/workspace')
     }
   }, [user, loading, router])
 
