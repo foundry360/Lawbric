@@ -41,6 +41,27 @@ textarea::placeholder {
   color: #9ca3af !important; /* gray-400 */
 }
 
+/* Override browser default select styling */
+select {
+  color: #111827 !important; /* gray-900 */
+  background-color: #ffffff !important;
+  outline: none !important;
+}
+
+select:hover {
+  border-color: #000000 !important;
+}
+
+select:focus {
+  border-color: #000000 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+select:active {
+  border-color: #000000 !important;
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;

@@ -51,7 +51,7 @@ export default api
 
 // Types
 export interface Case {
-  id: number
+  id: string | number  // UUID from Supabase (string) or legacy number
   name: string
   case_number?: string
   description?: string

@@ -21,7 +21,7 @@ export default function LoginForm() {
       await login(email, password)
       // Small delay to ensure state is updated
       setTimeout(() => {
-        router.push('/dashboard')
+        router.push('/workspace')
       }, 100)
     } catch (err: any) {
       console.error('Login error:', err)
@@ -58,7 +58,7 @@ export default function LoginForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent text-gray-900 bg-white placeholder:text-gray-400"
+            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none text-gray-900 bg-white placeholder:text-gray-400"
             placeholder="attorney@lawfirm.com"
           />
         </div>
@@ -72,7 +72,7 @@ export default function LoginForm() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent text-gray-900 bg-white placeholder:text-gray-400"
+            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none text-gray-900 bg-white placeholder:text-gray-400"
             placeholder="••••••••"
           />
         </div>
@@ -89,7 +89,7 @@ export default function LoginForm() {
           {loading ? 'Logging in...' : 'Login'}
         </button>
         <p className="text-sm text-gray-500 text-center">
-          Need access? Contact your administrator to create an account.
+            Need access? Contact your law firm administrator to create an account.
         </p>
       </form>
     </div>
