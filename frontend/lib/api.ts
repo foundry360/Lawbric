@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000'
 
 // Create axios instance with default config
 const api = axios.create({
@@ -28,10 +28,38 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Handle dev bypass - return mock data when backend is unavailable
+// Handle token refresh on 401 errors
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config
+    
+    // If we get a 401 and haven't already tried refreshing, try to refresh the token
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true
+      
+      try {
+        // Try to refresh Supabase session
+        const { supabase } = await import('./supabase')
+        const { getSession } = await import('./supabase-auth')
+        
+        const session = await getSession()
+        if (session?.access_token) {
+          // Update token in localStorage
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('token', session.access_token)
+          }
+          
+          // Update the authorization header and retry the request
+          originalRequest.headers.Authorization = `Bearer ${session.access_token}`
+          return api(originalRequest)
+        }
+      } catch (refreshError) {
+        // Token refresh failed - user needs to log in again
+        console.warn('Failed to refresh session token:', refreshError)
+      }
+    }
+    
     try {
       const devBypass = typeof window !== 'undefined' && localStorage.getItem('devBypass') === 'true'
       if (devBypass && (error.code === 'ECONNREFUSED' || error.message?.includes('Network Error') || !error.response)) {
@@ -68,6 +96,7 @@ export interface Document {
   file_type: string
   file_size: number
   status: string
+  thumbnail_path?: string
   page_count?: number
   word_count?: number
   bates_number?: string
@@ -167,5 +196,58 @@ export const usersApi = {
     api.post<AppUser>('/api/v1/users', data),
   delete: (id: string) => api.delete(`/api/v1/users/${id}`),
   deactivate: (id: string) => api.patch<AppUser>(`/api/v1/users/${id}/deactivate`),
+}
+
+export interface GoogleDriveFile {
+  id: string
+  name: string
+  mimeType: string
+  size?: string
+  modifiedTime?: string
+  webViewLink?: string
+  thumbnailLink?: string
+  iconLink?: string
+}
+
+export interface IntegrationStatus {
+  connected: boolean
+}
+
+export const integrationsApi = {
+  google: {
+    getAuthUrl: () => api.get<{ url: string }>('/api/v1/integrations/google/authorize'),
+    getStatus: () => api.get<IntegrationStatus>('/api/v1/integrations/google/status'),
+    getClientId: () => api.get<{ client_id: string }>('/api/v1/integrations/google/client-id'),
+    getAccessToken: () => api.get<{ access_token: string }>('/api/v1/integrations/google/access-token'),
+    disconnect: () => api.delete('/api/v1/integrations/google/disconnect'),
+    callback: (code: string) => api.get<{ status: string; message: string }>('/api/v1/integrations/google/callback', {
+      params: { code }
+    }),
+    listFiles: (folderId?: string, searchQuery?: string) => api.get<{ files: GoogleDriveFile[] }>('/api/v1/integrations/google/files', { 
+      params: { 
+        ...(folderId ? { folder_id: folderId } : {}),
+        ...(searchQuery ? { search: searchQuery } : {})
+      }
+    }),
+    listRecent: (searchQuery?: string) => api.get<{ files: GoogleDriveFile[] }>('/api/v1/integrations/google/files/recent', {
+      params: searchQuery ? { search: searchQuery } : {}
+    }),
+    listShared: (searchQuery?: string) => api.get<{ files: GoogleDriveFile[] }>('/api/v1/integrations/google/files/shared', {
+      params: searchQuery ? { search: searchQuery } : {}
+    }),
+    importFile: (caseId: string, fileId: string, metadata?: {
+      bates_number?: string
+      custodian?: string
+      author?: string
+      document_date?: string
+      source?: string
+    }) => api.post('/api/v1/integrations/google/import', null, {
+      params: {
+        case_id: caseId,
+        file_id: fileId,
+        ...(metadata || {})
+      }
+    }),
+  }
 }
 

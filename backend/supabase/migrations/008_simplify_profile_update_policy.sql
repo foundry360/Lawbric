@@ -24,3 +24,4 @@ CREATE POLICY "Users can update own profile"
 -- For now, we'll keep it simple and allow users to update their own profiles only
 
 
+

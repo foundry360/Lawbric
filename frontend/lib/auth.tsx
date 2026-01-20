@@ -5,7 +5,7 @@ import { supabase } from './supabase'
 import { signIn, signUp, getSession, getCurrentUser, onAuthStateChange, mapSupabaseUser, mapSupabaseUserWithProfile } from './supabase-auth'
 import axios from 'axios'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000'
 
 interface User {
   id: string | number
@@ -82,14 +82,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
       
-      // Quick check: if we have token in localStorage, set loading false early
+      // Quick check: if no token in localStorage, show login immediately
+      let storedToken: string | null = null
       if (typeof window !== 'undefined') {
-        const storedToken = localStorage.getItem('token')
-        if (storedToken) {
-          // We have a token, so we're likely authenticated - don't show loading
-          // But still try to get user data in background
+        storedToken = localStorage.getItem('token')
+        if (!storedToken) {
+          // No token - show login page immediately and skip all auth checks
+          if (mounted) {
+            setLoading(false)
+          }
+          if (safetyTimeout) clearTimeout(safetyTimeout)
+          return
         }
       }
+      
       // Safety timeout to ensure loading is always set to false
       // This prevents infinite loading if something goes wrong
       safetyTimeout = setTimeout(() => {
@@ -97,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.warn('Auth loading timeout - forcing loading to false')
           setLoading(false)
         }
-      }, 5000) // 5 second timeout - should be enough for auth to complete
+      }, 3000) // Reduced to 3 seconds - faster timeout
 
       try {
         // Wait for client-side only
@@ -107,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        // Try Supabase first
+        // Try Supabase first (only if we have a token or want to check for session)
         try {
           // Supabase might need a moment to restore session from localStorage
           // Wait a bit before checking session
@@ -128,14 +134,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               
               // Always set user if we have appUser, even if mounted is false
               // The component might have unmounted during async operations, but we still want to restore the session
-              console.log('✅ Loaded user with role from profile:', appUser.role)
+              const avatarUrl = appUser.avatar_url && appUser.avatar_url !== 'null' && appUser.avatar_url.trim() !== '' 
+                ? appUser.avatar_url 
+                : undefined
               setUser({
                 id: appUser.id,
                 email: appUser.email,
                 role: appUser.role || 'user',
                 title: appUser.title,
                 full_name: appUser.full_name,
-                avatar_url: appUser.avatar_url
+                avatar_url: avatarUrl
               })
               // Store Supabase access token (not user ID)
               setToken(session.access_token)
@@ -245,12 +253,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           }
         } else {
-          // No token - don't create dev user automatically
-          // Let the user go to login page instead
-          if (mounted) {
-            setLoading(false)
-            if (safetyTimeout) clearTimeout(safetyTimeout)
-          }
+          // No token - already set loading to false above, just clean up
+          if (safetyTimeout) clearTimeout(safetyTimeout)
           // Don't set user - this will allow the dashboard layout to redirect to login
         }
       } catch (error) {
@@ -274,14 +278,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Fetch user with profile to get accurate role from profiles table
         mapSupabaseUserWithProfile(session.user).then((appUser) => {
           if (appUser && session.access_token && mounted) {
-            console.log('✅ User signed in with role from profile:', appUser.role)
             setUser({
               id: appUser.id,
               email: appUser.email,
               role: appUser.role || 'user',
               title: appUser.title,
               full_name: appUser.full_name,
-              avatar_url: appUser.avatar_url
+              avatar_url: appUser.avatar_url || undefined
             })
             // Store Supabase access token (not user ID)
             setToken(session.access_token)
@@ -356,23 +359,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Sign in successful - fetch profile to get accurate role from profiles table
         const appUser = await mapSupabaseUserWithProfile(signInData.user)
         if (appUser) {
-          console.log('✅ Loaded user with role from profile:', appUser.role)
-          setUser({
+          // Ensure avatar_url is properly set
+          const avatarUrl = appUser.avatar_url && appUser.avatar_url !== 'null' && appUser.avatar_url.trim() !== '' 
+            ? appUser.avatar_url 
+            : undefined
+          
+          const userData = {
             id: appUser.id,
             email: appUser.email,
             role: appUser.role || 'user',
             title: appUser.title,
-            full_name: appUser.full_name
-          })
+            full_name: appUser.full_name,
+            avatar_url: avatarUrl
+          }
+          
+          // Set user state
+          setUser(userData)
+          
           // Store Supabase access token (not user ID)
           const accessToken = signInData.session.access_token
           setToken(accessToken)
-          // Store token in localStorage for API calls
           if (typeof window !== 'undefined') {
             localStorage.setItem('token', accessToken)
             localStorage.removeItem('devBypass')
           }
-          console.log('✅ User logged in successfully')
+          setLoading(false)
+          
+          // Small delay to ensure state is set before navigation
+          await new Promise(resolve => setTimeout(resolve, 100))
           return
         }
       }

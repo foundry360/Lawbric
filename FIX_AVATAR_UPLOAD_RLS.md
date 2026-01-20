@@ -32,3 +32,5 @@ After running the migration, try uploading an avatar again. If it still fails, c
 - The user ID in your session matches the profile you're trying to update
 - Check the Supabase logs for more detailed error messages
 
+
+

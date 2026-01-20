@@ -75,7 +75,7 @@ try {
 }
 
 # Start the server
-Write-Host "`nStarting backend server on http://localhost:8000..." -ForegroundColor Cyan
+Write-Host "`nStarting backend server on http://localhost:9000..." -ForegroundColor Cyan
 Write-Host "Press Ctrl+C to stop`n" -ForegroundColor Yellow
 
 & $pythonCmd run.py

@@ -134,7 +134,7 @@ export default function ChatInterface({
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="Ask a question about the documents..."
-            className="flex-1 px-4 py-2 border border-gray-200 rounded-lg focus:ring-0 focus:outline-none focus:border-gray-200"
+            className="flex-1 px-4 py-2 border border-gray-200 rounded-lg focus:ring-0 focus:outline-none focus:border-gray-200 text-sm placeholder:text-xs"
             disabled={loading}
           />
           <button

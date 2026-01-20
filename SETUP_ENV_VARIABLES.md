@@ -80,3 +80,5 @@ The frontend console should show:
 - **Never** put the service role key in frontend environment variables
 - Make sure `.env` and `.env.local` are in `.gitignore` (they should be already)
 
+
+

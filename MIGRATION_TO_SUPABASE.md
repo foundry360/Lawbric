@@ -117,3 +117,5 @@ Create the first admin user via:
 4. Test user management in Settings page
 5. Verify all API calls use Supabase tokens
 
+
+

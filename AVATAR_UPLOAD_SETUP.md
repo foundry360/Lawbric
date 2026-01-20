@@ -52,3 +52,5 @@ Or simpler (if bucket is public):
 4. Avatar should appear immediately
 5. Check dashboard header - should show avatar instead of initials
 
+
+

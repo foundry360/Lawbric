@@ -4,6 +4,16 @@ import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
+
+// Import User type from auth
+type User = {
+  id: string | number
+  email: string
+  role: string
+  title?: string
+  full_name?: string
+  avatar_url?: string
+}
 import { usersApi, AppUser } from '@/lib/api'
 import { mapSupabaseUserWithProfile, getCurrentUser } from '@/lib/supabase-auth'
 import { supabase } from '@/lib/supabase'
@@ -39,18 +49,14 @@ export default function SettingsPage() {
           if (currentUser) {
             const profileUser = await mapSupabaseUserWithProfile(currentUser)
             if (profileUser) {
-              console.log('✅ Fetched fresh profile for settings page:', profileUser)
-              console.log('   - role:', profileUser.role)
-              console.log('   - title:', profileUser.title)
-              console.log('   - title type:', typeof profileUser.title)
-              setDisplayUser(profileUser)
-            } else {
-              console.warn('⚠️ profileUser is null')
+              setDisplayUser({
+                ...profileUser,
+                role: profileUser.role || 'user'
+              } as User)
             }
           }
         } catch (error) {
           console.error('Error fetching fresh profile:', error)
-          // Fall back to user from context
           setDisplayUser(user)
         }
       } else {
@@ -59,7 +65,7 @@ export default function SettingsPage() {
     }
     
     refreshProfile()
-  }, [user?.id]) // Only re-fetch if user ID changes
+  }, [user])
 
   // Use displayUser for rendering (has fresh profile data) or fall back to user from context
   const userToDisplay = displayUser || user
@@ -143,7 +149,7 @@ export default function SettingsPage() {
 
       if (uploadError) {
         console.error('❌ Storage upload error:', uploadError)
-        console.error('   Error code:', uploadError.error)
+        console.error('   Error code:', (uploadError as any).error)
         console.error('   Error message:', uploadError.message)
         throw uploadError
       }
@@ -186,7 +192,10 @@ export default function SettingsPage() {
       if (currentUser) {
         const profileUser = await mapSupabaseUserWithProfile(currentUser)
         if (profileUser) {
-          setDisplayUser(profileUser)
+          setDisplayUser({
+            ...profileUser,
+            role: profileUser.role || 'user'
+          } as User)
           // Update auth context user
           if (refreshUser) {
             await refreshUser()
@@ -258,7 +267,10 @@ export default function SettingsPage() {
       if (currentUser) {
         const profileUser = await mapSupabaseUserWithProfile(currentUser)
         if (profileUser) {
-          setDisplayUser(profileUser)
+          setDisplayUser({
+            ...profileUser,
+            role: profileUser.role || 'user'
+          } as User)
           // Update auth context user
           if (refreshUser) {
             await refreshUser()
@@ -402,6 +414,7 @@ export default function SettingsPage() {
                                   src={avatarPreview || displayUser?.avatar_url || ''}
                                   alt="Profile avatar"
                                   fill
+                                  sizes="80px"
                                   className="object-cover"
                                 />
                                 <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center rounded-full">
@@ -549,6 +562,83 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Replace Avatar Confirmation Modal */}
+      {showReplaceAvatarModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl">
+            <h3 className="text-lg font-bold mb-4 text-gray-900">Replace Profile Picture</h3>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                You already have a profile picture. Do you want to replace it with a new one?
+              </p>
+              {pendingAvatarFile && (
+                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden">
+                    {pendingAvatarFile.type.startsWith('image/') && (
+                      <img
+                        src={URL.createObjectURL(pendingAvatarFile)}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-900">{pendingAvatarFile.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {(pendingAvatarFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={handleCancelReplaceAvatar}
+                  disabled={uploadingAvatar}
+                  className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmReplaceAvatar}
+                  disabled={uploadingAvatar}
+                  className="flex-1 px-4 py-2 text-sm bg-black text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-black"
+                >
+                  {uploadingAvatar ? 'Uploading...' : 'Replace Picture'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Modal */}
+      {showErrorModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl">
+            <h3 className="text-lg font-bold mb-4 text-gray-900">Error</h3>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                {errorMessage}
+              </p>
+              <div className="flex justify-end pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowErrorModal(false)
+                    setErrorMessage('')
+                  }}
+                  className="px-4 py-2 text-sm bg-black text-white rounded-lg hover:bg-gray-900"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -878,7 +968,7 @@ function UserManagementSection() {
       {/* Create User Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl">
             <h3 className="text-lg font-bold mb-4 text-gray-900">Create New User</h3>
             <form onSubmit={handleCreateUser} className="space-y-4">
               <div>
@@ -980,7 +1070,7 @@ function UserManagementSection() {
       {/* Edit User Modal */}
       {showEditModal && editingUser && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl">
             <h3 className="text-lg font-bold mb-4 text-gray-900">Edit User</h3>
             <form onSubmit={handleUpdateUser} className="space-y-4">
               <div>
@@ -1073,7 +1163,7 @@ function UserManagementSection() {
       {/* Delete User Confirmation Modal */}
       {showDeleteModal && userToDelete && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl">
             <h3 className="text-lg font-bold mb-4 text-gray-900">Delete User</h3>
             <div className="space-y-4">
               <p className="text-sm text-gray-700">
@@ -1123,83 +1213,6 @@ function UserManagementSection() {
                   className="flex-1 px-4 py-2 text-sm bg-black text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-black"
                 >
                   {deletingId === userToDelete.id ? 'Deleting...' : 'Delete User'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Replace Avatar Confirmation Modal */}
-      {showReplaceAvatarModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-bold mb-4 text-gray-900">Replace Profile Picture</h3>
-            <div className="space-y-4">
-              <p className="text-sm text-gray-700">
-                You already have a profile picture. Do you want to replace it with a new one?
-              </p>
-              {pendingAvatarFile && (
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden">
-                    {pendingAvatarFile.type.startsWith('image/') && (
-                      <img
-                        src={URL.createObjectURL(pendingAvatarFile)}
-                        alt="Preview"
-                        className="w-full h-full object-cover"
-                      />
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">{pendingAvatarFile.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {(pendingAvatarFile.size / 1024 / 1024).toFixed(2)} MB
-                    </p>
-                  </div>
-                </div>
-              )}
-              <div className="flex gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={handleCancelReplaceAvatar}
-                  disabled={uploadingAvatar}
-                  className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmReplaceAvatar}
-                  disabled={uploadingAvatar}
-                  className="flex-1 px-4 py-2 text-sm bg-black text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-black"
-                >
-                  {uploadingAvatar ? 'Uploading...' : 'Replace Picture'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Error Modal */}
-      {showErrorModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-bold mb-4 text-gray-900">Error</h3>
-            <div className="space-y-4">
-              <p className="text-sm text-gray-700">
-                {errorMessage}
-              </p>
-              <div className="flex justify-end pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowErrorModal(false)
-                    setErrorMessage('')
-                  }}
-                  className="px-4 py-2 text-sm bg-black text-white rounded-lg hover:bg-gray-900"
-                >
-                  OK
                 </button>
               </div>
             </div>

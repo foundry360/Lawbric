@@ -99,3 +99,5 @@ Then restart the dev server.
 - [ ] Browser console shows Supabase client initialized
 - [ ] No typos in variable names
 
+
+
