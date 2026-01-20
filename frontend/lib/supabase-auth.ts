@@ -95,28 +95,27 @@ export async function getUserProfile(userId: string) {
     
     const { data, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select('id, email, full_name, role, title, avatar_url, is_active, created_at, updated_at')
       .eq('id', userId)
       .single()
     
     if (error) {
       console.error('❌ Supabase error fetching profile:', error)
-      console.error('   Error code:', error.code)
-      console.error('   Error message:', error.message)
-      console.error('   Error details:', error.details)
-      console.error('   Error hint:', error.hint)
-      
-      if (error.code === 'PGRST116') {
-        console.error('   → Profile not found in database')
-      } else if (error.code === '42501') {
-        console.error('   → Permission denied - RLS policy blocked access')
-        console.error('   → Check: Does auth.uid() match the profile id?')
-      }
-      
+      console.error('   Error code:', error.code, 'message:', error.message)
       throw error
     }
     
-    console.log('✅ Profile fetched successfully:', data)
+    if (data) {
+      console.log('✅ Profile fetched successfully')
+      console.log('   Full profile data:', data)
+      console.log('   avatar_url value:', data.avatar_url)
+      console.log('   avatar_url type:', typeof data.avatar_url)
+      console.log('   avatar_url is null:', data.avatar_url === null)
+      console.log('   avatar_url is undefined:', data.avatar_url === undefined)
+      console.log('   avatar_url truthy:', !!data.avatar_url)
+    } else {
+      console.warn('⚠️ Profile query returned no data')
+    }
     return data
   } catch (error: any) {
     console.error('❌ Error in getUserProfile (catch block):', error)
@@ -151,18 +150,16 @@ export async function mapSupabaseUserWithProfile(user: User | null): Promise<Sup
   // Try to get role and title from profiles table (this is the source of truth)
   try {
     const profile = await getUserProfile(user.id)
-    console.log('📋 Fetched profile from database:', profile) // Debug log
     
     if (profile) {
-      // Use profile data as source of truth - only fall back if null/undefined
+      // Use profile data as source of truth
       role = profile.role ?? user.user_metadata?.role ?? 'user'
       title = profile.title ?? user.user_metadata?.title ?? 'attorney'
       full_name = profile.full_name ?? user.user_metadata?.full_name ?? user.user_metadata?.fullName ?? undefined
-      avatar_url = profile.avatar_url ?? undefined
-      console.log('✅ Using profile data - role:', role, 'title:', title, 'full_name:', full_name) // Debug log
-      console.log('   Profile object keys:', Object.keys(profile))
-      console.log('   profile.role:', profile.role, 'type:', typeof profile.role)
-      console.log('   profile.title:', profile.title, 'type:', typeof profile.title)
+      // Explicitly handle avatar_url - convert null to undefined, keep string as-is
+      avatar_url = profile.avatar_url && profile.avatar_url !== 'null' && profile.avatar_url.trim() !== '' 
+        ? profile.avatar_url 
+        : undefined
     } else {
       console.warn('⚠️ Profile is null, falling back to metadata')
       role = user.user_metadata?.role ?? 'user'
@@ -175,16 +172,20 @@ export async function mapSupabaseUserWithProfile(user: User | null): Promise<Sup
     title = user.user_metadata?.title ?? 'attorney'
   }
   
-  console.log('📤 Returning user object - role:', role, 'title:', title) // Debug log
-  
-  return {
+  console.log('📤 Returning user object - role:', role, 'title:', title, 'avatar_url:', avatar_url) // Debug log
+  console.log('📤 Full return object:', { id: user.id, email: user.email || '', role, title, full_name, avatar_url })
+  // #region agent log
+  const returnUser = {
     id: user.id,
     email: user.email || '',
     role: role,
     title: title,
     full_name: full_name,
-    avatar_url: avatar_url,
-  }
+    avatar_url: avatar_url || undefined, // Explicitly convert null to undefined
+  };
+  fetch('http://127.0.0.1:7242/ingest/5a0998ac-8afa-45a8-961d-0dd6f96371b5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase-auth.ts:177',message:'Returning user object with avatar_url',data:{userId:returnUser.id,avatarUrl:returnUser.avatar_url,hasAvatarUrl:!!returnUser.avatar_url,returnObject:returnUser},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
+  return returnUser;
 }
 
 /**

@@ -34,8 +34,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const isLoadingRef = useRef(false)
 
   const refreshCases = useCallback(async () => {
-    // Don't reload if already loading or already loaded
-    if (isLoadingRef.current || hasLoadedRef.current) {
+    // Don't reload if already loading (prevent concurrent loads)
+    if (isLoadingRef.current) {
       return
     }
     
@@ -47,7 +47,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         .from('cases')
         .select('*')
         .eq('is_active', true)
-        .order('created_at', { ascending: false })
+        .order('updated_at', { ascending: false, nullsFirst: false })
       
       if (error) {
         console.error('Failed to load cases from Supabase:', error)
@@ -55,7 +55,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       }
       
       // Map Supabase cases to Case interface
-      const casesData = (data || []).map(mapSupabaseCase)
+      let casesData = (data || []).map(mapSupabaseCase)
+      
+      // Sort by updated_at (most recent first), fallback to created_at if updated_at is null
+      casesData.sort((a, b) => {
+        const dateA = new Date(a.updated_at || a.created_at || 0).getTime()
+        const dateB = new Date(b.updated_at || b.created_at || 0).getTime()
+        return dateB - dateA // Descending order (newest first)
+      })
+      
       setCases(casesData)
       hasLoadedRef.current = true
     } catch (error: any) {

@@ -234,7 +234,7 @@ class GoogleDriveService:
             'token_expires_at': expires_at
         }
     
-    def list_files(self, folder_id: Optional[str] = None, page_size: int = 100) -> List[Dict[str, Any]]:
+    def list_files(self, folder_id: Optional[str] = None, page_size: int = 100, search_query: Optional[str] = None) -> List[Dict[str, Any]]:
         """List files and folders from Google Drive"""
         if not self._load_credentials():
             raise Exception("Failed to load credentials or not connected")
@@ -245,6 +245,12 @@ class GoogleDriveService:
                 query += f" and '{folder_id}' in parents"
             else:
                 query += " and 'root' in parents"
+            
+            # Add search query if provided
+            if search_query and search_query.strip():
+                # Escape single quotes in search query and wrap in quotes for exact matching
+                escaped_query = search_query.replace("'", "\\'")
+                query += f" and name contains '{escaped_query}'"
             
             results = []
             page_token = None
@@ -270,13 +276,19 @@ class GoogleDriveService:
             print(f"Error listing Google Drive files: {e}")
             raise
     
-    def list_recent_files(self, page_size: int = 100) -> List[Dict[str, Any]]:
+    def list_recent_files(self, page_size: int = 100, search_query: Optional[str] = None) -> List[Dict[str, Any]]:
         """List recently accessed files from Google Drive"""
         if not self._load_credentials():
             raise Exception("Failed to load credentials or not connected")
         
         try:
             query = "trashed=false"
+            
+            # Add search query if provided
+            if search_query and search_query.strip():
+                # Escape single quotes in search query and wrap in quotes for exact matching
+                escaped_query = search_query.replace("'", "\\'")
+                query += f" and name contains '{escaped_query}'"
             
             results = []
             page_token = None
@@ -304,13 +316,19 @@ class GoogleDriveService:
             print(f"Error listing recent Google Drive files: {e}")
             raise
     
-    def list_shared_files(self, page_size: int = 100) -> List[Dict[str, Any]]:
+    def list_shared_files(self, page_size: int = 100, search_query: Optional[str] = None) -> List[Dict[str, Any]]:
         """List files shared with the user from Google Drive"""
         if not self._load_credentials():
             raise Exception("Failed to load credentials or not connected")
         
         try:
             query = "trashed=false and sharedWithMe=true"
+            
+            # Add search query if provided
+            if search_query and search_query.strip():
+                # Escape single quotes in search query and wrap in quotes for exact matching
+                escaped_query = search_query.replace("'", "\\'")
+                query += f" and name contains '{escaped_query}'"
             
             results = []
             page_token = None

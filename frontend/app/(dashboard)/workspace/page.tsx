@@ -117,11 +117,11 @@ export default function WorkspacePage() {
     const buttonElement = event.currentTarget as HTMLElement
     const rect = buttonElement.getBoundingClientRect()
     
-    if (openMenuId === caseItem.id) {
+    if (openMenuId === String(caseItem.id)) {
       setOpenMenuId(null)
       setMenuPosition(null)
     } else {
-      setOpenMenuId(caseItem.id)
+      setOpenMenuId(String(caseItem.id))
       setMenuPosition({
         top: rect.bottom + window.scrollY,
         left: rect.left + window.scrollX
@@ -156,7 +156,7 @@ export default function WorkspacePage() {
       return
     }
 
-    setDeletingId(caseToDelete.id)
+    setDeletingId(String(caseToDelete.id))
     try {
       const { error } = await supabase
         .from('cases')
@@ -391,7 +391,7 @@ export default function WorkspacePage() {
                 className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow cursor-pointer p-4 h-32 flex flex-col"
               >
                 <div className="flex items-start justify-between mb-3">
-                  <FileText className="w-6 h-6 text-primary-600" />
+                  <FileText className="w-6 h-6 text-gray-500" />
                   {caseItem.case_number && (
                     <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
                       {caseItem.case_number}
@@ -399,7 +399,7 @@ export default function WorkspacePage() {
                   )}
                 </div>
                 <div className="flex-1 flex flex-col">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-2 line-clamp-2">
+                  <h3 className="text-sm font-medium text-gray-900 mb-2 line-clamp-2">
                     {caseItem.name}
                   </h3>
                   {caseItem.description && (
@@ -455,7 +455,7 @@ export default function WorkspacePage() {
                   >
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-primary-600 flex-shrink-0" />
+                        <FileText className="w-4 h-4 text-gray-500 flex-shrink-0" />
                         <span className="text-sm font-medium text-gray-900">
                           {caseItem.name}
                         </span>
@@ -493,7 +493,7 @@ export default function WorkspacePage() {
                         >
                           <MoreVertical className="w-4 h-4" />
                         </button>
-                        {openMenuId === caseItem.id && menuPosition && typeof window !== 'undefined' && createPortal(
+                        {openMenuId === String(caseItem.id) && menuPosition && typeof window !== 'undefined' && createPortal(
                           <div
                             data-dropdown-menu
                             className="fixed w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-50"
@@ -655,7 +655,7 @@ export default function WorkspacePage() {
       {/* Delete Case Confirmation Modal */}
       {showDeleteModal && caseToDelete && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl">
             <h3 className="text-lg font-bold mb-4 text-gray-900">Delete Case</h3>
             <div className="space-y-4">
               <p className="text-sm text-gray-700">
@@ -705,7 +705,7 @@ export default function WorkspacePage() {
 
       {showCreateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl">
             <h2 className="text-2xl font-bold mb-4 text-gray-900">Add Case</h2>
             <form onSubmit={handleCreateCase}>
               <div className="mb-4">

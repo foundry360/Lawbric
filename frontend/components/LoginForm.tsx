@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 
 export default function LoginForm() {
   const [email, setEmail] = useState('')
@@ -19,10 +20,8 @@ export default function LoginForm() {
 
     try {
       await login(email, password)
-      // Small delay to ensure state is updated
-      setTimeout(() => {
-        router.push('/workspace')
-      }, 100)
+      // Use replace to avoid adding to history and prevent double redirects
+      router.replace('/workspace')
     } catch (err: any) {
       console.error('Login error:', err)
       // Show user-friendly error messages
@@ -47,6 +46,22 @@ export default function LoginForm() {
 
   return (
     <div className="bg-white shadow-lg rounded-lg p-8">
+      <div className="text-center mb-8">
+        <div className="flex justify-center mb-4">
+          <Image 
+            src="/logo.png" 
+            alt="Legal Discovery AI Logo" 
+            width={200} 
+            height={80}
+            className="h-auto w-auto max-w-full"
+            style={{ width: 'auto', height: 'auto' }}
+            priority
+          />
+        </div>
+        <p className="text-gray-600">
+          AI-powered document analysis for legal professionals
+        </p>
+      </div>
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
           <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">

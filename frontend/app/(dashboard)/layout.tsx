@@ -4,8 +4,9 @@ import Sidebar from '@/components/Sidebar'
 import { useAuth } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
-import { Fullscreen, LogOut, Search, Settings } from 'lucide-react'
+import { Fullscreen, LogOut, Search, Settings, X } from 'lucide-react'
 import Image from 'next/image'
+import { getUserProfile } from '@/lib/supabase-auth'
 
 export default function DashboardLayout({
   children,
@@ -20,6 +21,9 @@ export default function DashboardLayout({
   const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [isOnline, setIsOnline] = useState(true)
   const [isBackendReachable, setIsBackendReachable] = useState(true)
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+
 
   useEffect(() => {
     // Listen for fullscreen changes
@@ -34,7 +38,7 @@ export default function DashboardLayout({
   }, [])
 
   useEffect(() => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000'
     let healthCheckInterval: NodeJS.Timeout | null = null
     let isMounted = true
 
@@ -55,6 +59,7 @@ export default function DashboardLayout({
     
     // Check backend health
     const checkBackendHealth = async () => {
+      // Debug logging disabled - was causing connection refused errors
       try {
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
@@ -70,7 +75,8 @@ export default function DashboardLayout({
         if (isMounted) {
           setIsBackendReachable(response.ok)
         }
-      } catch (error) {
+      } catch (error: any) {
+        // Debug logging disabled
         // Backend is unreachable (network error, timeout, CORS, etc.)
         if (isMounted) {
           setIsBackendReachable(false)
@@ -112,7 +118,21 @@ export default function DashboardLayout({
   }
 
   const handleLogout = () => {
-    logout()
+    setShowLogoutModal(true)
+  }
+
+  const confirmLogout = async () => {
+    setShowLogoutModal(false)
+    setIsLoggingOut(true)
+    
+    // Add a smooth fade-out transition
+    await new Promise(resolve => setTimeout(resolve, 300))
+    
+    await logout()
+    
+    // Small delay before navigation for smoother transition
+    await new Promise(resolve => setTimeout(resolve, 100))
+    
     router.push('/')
   }
 
@@ -121,6 +141,11 @@ export default function DashboardLayout({
     if (!loading) {
       setIsInitialLoad(false)
     }
+    // Safety timeout: force initial load to complete after 5 seconds
+    const timeout = setTimeout(() => {
+      setIsInitialLoad(false)
+    }, 5000)
+    return () => clearTimeout(timeout)
   }, [loading])
 
   useEffect(() => {
@@ -178,9 +203,18 @@ export default function DashboardLayout({
   // - Still loading AND
   // - No user yet AND
   // - But we have a token (meaning we're probably authenticating) OR no token and no dev bypass
-  if (isInitialLoad && loading && !user && (storedToken || (!devBypass && !storedToken))) {
+  // BUT: Don't show loading screen for more than 3 seconds to prevent infinite loading
+  const [maxLoadingTimeReached, setMaxLoadingTimeReached] = useState(false)
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setMaxLoadingTimeReached(true)
+    }, 3000)
+    return () => clearTimeout(timeout)
+  }, [])
+  
+  if (isInitialLoad && loading && !user && (storedToken || (!devBypass && !storedToken)) && !maxLoadingTimeReached) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <div className={`min-h-screen flex items-center justify-center bg-gray-100 transition-opacity duration-300 ${isLoggingOut ? 'opacity-0' : 'opacity-100'}`}>
         <div className="text-lg text-gray-600">Loading...</div>
       </div>
     )
@@ -193,7 +227,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100">
+    <div className={`flex flex-col h-screen bg-gray-100 transition-opacity duration-300 ${isLoggingOut ? 'opacity-0' : 'opacity-100'}`}>
       {/* Full-width Header */}
       <header className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-6 flex-shrink-0">
         {/* Logo - left justified */}
@@ -271,26 +305,24 @@ export default function DashboardLayout({
               <p className="text-sm font-medium text-gray-900">{user?.full_name || user?.email || 'Development User'}</p>
               <p className="text-xs text-gray-600 capitalize">{user?.title || user?.role || 'attorney'}</p>
             </div>
-            {user?.avatar_url ? (
+            {user?.avatar_url && user.avatar_url.trim() !== '' ? (
               <div className="relative w-10 h-10 rounded-full">
-                <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-gray-200">
-                  <Image
+                <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100">
+                  <img
                     src={user.avatar_url}
                     alt="Profile avatar"
-                    fill
-                    className="object-cover rounded-full"
+                    className="w-full h-full object-cover"
+                    key={`avatar-${user.id}-${user.avatar_url}`}
                   />
                 </div>
-                {/* Status indicator - green for online, red for offline */}
-                <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ${combinedOnlineStatus ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${combinedOnlineStatus ? 'bg-green-500' : 'bg-red-500'}`}></div>
               </div>
             ) : (
               <div className="relative w-10 h-10 rounded-full">
                 <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold">
                   {((user?.full_name || user?.email || 'DU')[0]).toUpperCase()}
                 </div>
-                {/* Status indicator - green for online, red for offline */}
-                <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ${combinedOnlineStatus ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${combinedOnlineStatus ? 'bg-green-500' : 'bg-red-500'}`}></div>
               </div>
             )}
           </div>
@@ -304,6 +336,48 @@ export default function DashboardLayout({
           {children}
         </main>
       </div>
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg py-10 px-6 w-full max-w-lg relative shadow-2xl">
+            {/* Close Button */}
+            <button
+              onClick={() => setShowLogoutModal(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <div className="space-y-4 text-center">
+              <p className="text-xl font-medium text-gray-900">
+                You are attempting to log out of Lawbric
+              </p>
+              <p className="text-lg text-gray-900">
+                Are you sure?
+              </p>
+              <p className="text-xs text-gray-500">
+                logged in as {user?.email || user?.full_name || 'user'}
+              </p>
+              <div className="flex justify-center pt-4">
+                <button
+                  onClick={confirmLogout}
+                  className="px-16 py-2 bg-black text-white rounded-lg hover:bg-gray-900 transition-colors font-medium text-sm"
+                >
+                  LOG OUT
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Logout Transition Overlay */}
+      {isLoggingOut && (
+        <div className="fixed inset-0 bg-white z-[100] flex items-center justify-center transition-opacity duration-300">
+          <div className="text-lg text-gray-600">Logging out...</div>
+        </div>
+      )}
     </div>
   )
 }

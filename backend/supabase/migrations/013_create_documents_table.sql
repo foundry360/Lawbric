@@ -106,3 +106,4 @@ CREATE TRIGGER on_documents_updated
   FOR EACH ROW EXECUTE FUNCTION public.handle_documents_updated_at();
 
 
+

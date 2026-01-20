@@ -2,10 +2,12 @@
 Integration endpoints for third-party services (Google Drive, etc.)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import Response
 from typing import Optional
 from urllib.parse import urlencode
+import httpx
 
 from app.core.supabase import get_supabase_client
 from app.core.config import settings
@@ -193,8 +195,37 @@ async def get_google_status(
     user_id: str = Depends(get_current_user_id)
 ):
     """Check if user has connected Google Drive"""
-    connection = get_oauth_connection(user_id, 'google_drive')
-    return {"connected": connection is not None}
+    # #region agent log
+    import json
+    from datetime import datetime
+    log_path = r"c:\LegalAI\.cursor\debug.log"
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"J","location":"integrations.py:193","message":"Google status check called","data":{"user_id":user_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    
+    try:
+        connection = get_oauth_connection(user_id, 'google_drive')
+        is_connected = connection is not None
+        
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"J","location":"integrations.py:202","message":"Google status check result","data":{"user_id":user_id,"is_connected":is_connected,"has_connection":connection is not None},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        return {"connected": is_connected}
+    except Exception as e:
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"J","location":"integrations.py:210","message":"Google status check error","data":{"user_id":user_id,"error":str(e),"error_type":type(e).__name__},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        print(f"Error checking Google Drive status: {e}")
+        raise
 
 
 @router.get("/google/client-id")
@@ -241,12 +272,13 @@ async def disconnect_google(
 @router.get("/google/files")
 async def list_google_files(
     folder_id: Optional[str] = Query(None, description="Folder ID to list files from. None for root."),
+    search: Optional[str] = Query(None, description="Search query to filter files by name."),
     user_id: str = Depends(get_current_user_id)
 ):
     """List files from Google Drive"""
     try:
         service = GoogleDriveService(user_id)
-        files = service.list_files(folder_id=folder_id)
+        files = service.list_files(folder_id=folder_id, search_query=search)
         return {"files": files}
     except Exception as e:
         print(f"Error listing Google Drive files: {e}")
@@ -255,12 +287,13 @@ async def list_google_files(
 
 @router.get("/google/files/recent")
 async def list_recent_google_files(
+    search: Optional[str] = Query(None, description="Search query to filter files by name."),
     user_id: str = Depends(get_current_user_id)
 ):
     """List recently accessed files from Google Drive"""
     try:
         service = GoogleDriveService(user_id)
-        files = service.list_recent_files()
+        files = service.list_recent_files(search_query=search)
         return {"files": files}
     except Exception as e:
         print(f"Error listing recent Google Drive files: {e}")
@@ -269,15 +302,222 @@ async def list_recent_google_files(
 
 @router.get("/google/files/shared")
 async def list_shared_google_files(
+    search: Optional[str] = Query(None, description="Search query to filter files by name."),
     user_id: str = Depends(get_current_user_id)
 ):
     """List files shared with the user from Google Drive"""
     try:
         service = GoogleDriveService(user_id)
-        files = service.list_shared_files()
+        files = service.list_shared_files(search_query=search)
         return {"files": files}
     except Exception as e:
         print(f"Error listing shared Google Drive files: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/google/thumbnail")
+async def get_google_drive_thumbnail(
+    file_id: str = Query(..., description="Google Drive file ID"),
+    authorization: Optional[str] = Header(None)
+):
+    """Proxy Google Drive thumbnail through backend to handle authentication"""
+    # #region agent log
+    import json
+    from datetime import datetime
+    log_path = r"c:\LegalAI\.cursor\debug.log"
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"integrations.py:316","message":"Thumbnail endpoint called","data":{"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    
+    try:
+        # Get user ID from auth token
+        user_id = None
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization[7:]
+            try:
+                # Create credentials object for get_current_user_id
+                from fastapi.security import HTTPAuthorizationCredentials
+                credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+                user_id = get_current_user_id(credentials)
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"integrations.py:298","message":"User authenticated","data":{"user_id":user_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+                except: pass
+                # #endregion
+            except Exception as auth_error:
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"integrations.py:305","message":"Auth failed","data":{"error":str(auth_error)},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+                except: pass
+                # #endregion
+                pass  # If auth fails, we'll try without it
+        
+        if not user_id:
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"integrations.py:312","message":"No user_id, raising 401","data":{},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        # Check if Google Drive is connected for this user
+        drive_service_check = GoogleDriveService(user_id)
+        oauth_connection = drive_service_check._get_connection()
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H3","location":"integrations.py:367","message":"Checking Google Drive connection","data":{"user_id":user_id,"has_connection":bool(oauth_connection),"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        # Get access token for this user
+        service = GoogleDriveService(user_id)
+        access_token = service.get_access_token()
+        
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H3","location":"integrations.py:375","message":"Got access token","data":{"has_token":bool(access_token),"user_id":user_id,"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        if not access_token:
+            raise HTTPException(status_code=401, detail="Failed to get access token")
+        
+        # Use Google Drive API to get file metadata with thumbnailLink
+        drive_service = GoogleDriveService(user_id)
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H8","location":"integrations.py:380","message":"Initializing Google Drive service","data":{"user_id":user_id,"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        # Load credentials and build service (this returns True if successful)
+        service_initialized = drive_service._load_credentials()
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H8","location":"integrations.py:383","message":"Service initialization result","data":{"initialized":service_initialized,"has_service":drive_service.service is not None,"user_id":user_id,"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        if not service_initialized or not drive_service.service:
+            raise HTTPException(status_code=401, detail="Failed to initialize Google Drive service")
+        
+        try:
+            # Get file metadata including thumbnailLink
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H4","location":"integrations.py:390","message":"Calling Google Drive API files().get()","data":{"file_id":file_id,"user_id":user_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            
+            file_metadata = drive_service.service.files().get(
+                fileId=file_id,
+                fields="thumbnailLink"
+            ).execute()
+            
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H4","location":"integrations.py:397","message":"Google Drive API call successful","data":{"file_id":file_id,"has_metadata":bool(file_metadata)},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            
+            thumbnail_url = file_metadata.get('thumbnailLink')
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H5","location":"integrations.py:401","message":"Extracted thumbnailLink","data":{"file_id":file_id,"has_thumbnail_link":bool(thumbnail_url),"thumbnail_url":thumbnail_url[:100] if thumbnail_url else None},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            
+            if not thumbnail_url:
+                # No thumbnail available for this file type
+                raise HTTPException(status_code=404, detail="Thumbnail not available for this file")
+            
+            # Add size parameter to thumbnail URL
+            if 'sz=' not in thumbnail_url:
+                thumbnail_url += '&sz=w500-h500' if '?' in thumbnail_url else '?sz=w500-h500'
+            
+            # Fetch the thumbnail image
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H6","location":"integrations.py:411","message":"Fetching thumbnail from Google URL","data":{"file_id":file_id,"thumbnail_url":thumbnail_url[:150]},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                response = await client.get(
+                    thumbnail_url,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=10.0
+                )
+                
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H6","location":"integrations.py:420","message":"Thumbnail fetch response","data":{"file_id":file_id,"status_code":response.status_code,"content_length":len(response.content),"content_type":response.headers.get("Content-Type")},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+                except: pass
+                # #endregion
+                
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to fetch thumbnail from Google Drive: {response.status_code}"
+                    )
+                
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H6","location":"integrations.py:428","message":"Returning thumbnail successfully","data":{"file_id":file_id,"content_length":len(response.content)},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+                except: pass
+                # #endregion
+                
+                return Response(
+                    content=response.content,
+                    media_type=response.headers.get("Content-Type", "image/jpeg"),
+                    headers={
+                        "Cache-Control": "public, max-age=3600"  # Cache for 1 hour
+                    }
+                )
+        except HTTPException:
+            raise
+        except Exception as api_error:
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H4","location":"integrations.py:441","message":"Exception in Google Drive API call","data":{"file_id":file_id,"error_type":type(api_error).__name__,"error":str(api_error)},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to get thumbnail: {str(api_error)}"
+            )
+    except HTTPException as e:
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"integrations.py:369","message":"HTTPException raised","data":{"status_code":e.status_code,"detail":str(e.detail)},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        raise
+    except Exception as e:
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"I","location":"integrations.py:376","message":"Exception in thumbnail endpoint","data":{"error_type":type(e).__name__,"error":str(e)},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        print(f"Error fetching Google Drive thumbnail: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

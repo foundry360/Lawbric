@@ -62,6 +62,8 @@ class DocumentResponse(DocumentBase):
     id: int
     case_id: int
     status: str
+    error_message: Optional[str] = None
+    thumbnail_path: Optional[str] = None
     page_count: Optional[int] = None
     word_count: Optional[int] = None
     requires_ocr: bool

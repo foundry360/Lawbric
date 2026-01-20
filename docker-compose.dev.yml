@@ -1,0 +1,76 @@
+# Environment variables can be loaded from .env file in project root
+# Example .env file:
+# NEXT_PUBLIC_SUPABASE_URL=https://...
+# NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+# OPENAI_API_KEY=...
+# ANTHROPIC_API_KEY=...
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: legalai-backend-dev
+    ports:
+      - "9000:9000"
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=sqlite:///./legalai.db
+      - VECTOR_DB_TYPE=chroma
+      - UPLOAD_DIR=./uploads
+      - THUMBNAIL_DIR=./thumbnails
+      - VECTOR_DB_DIR=./vector_db
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
+    volumes:
+      # Mount source code for hot reload (excludes venv, __pycache__, etc. via .dockerignore)
+      - type: bind
+        source: ./backend
+        target: /app
+      # Ensure uploads, thumbnails, and vector_db persist
+      - ./backend/uploads:/app/uploads
+      - ./backend/thumbnails:/app/thumbnails
+      - ./backend/vector_db:/app/vector_db
+    restart: unless-stopped
+    command: python run.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: legalai-frontend-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:9000
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+    volumes:
+      - type: bind
+        source: ./frontend
+        target: /app
+      - type: volume
+        source: frontend-node-modules
+        target: /app/node_modules
+      - type: volume
+        source: frontend-next
+        target: /app/.next
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    command: npm run dev
+
+volumes:
+  frontend-node-modules:
+  frontend-next:
+

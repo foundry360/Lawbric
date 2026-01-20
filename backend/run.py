@@ -7,10 +7,13 @@ import sys
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
 # #region agent log
-log_path = r"c:\LegalAI\.cursor\debug.log"
+# Use relative path that works in both Windows and Docker
+log_path = Path("/tmp/debug.log") if os.path.exists("/tmp") else Path(".cursor/debug.log")
 try:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a") as f:
         f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:12","message":"Python interpreter found","data":{"python_version":sys.version,"executable":sys.executable},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
 except: pass
@@ -22,7 +25,7 @@ try:
     # #region agent log
     try:
         with open(log_path, "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:20","message":"Imports successful","data":{"host":"0.0.0.0","port":8000,"environment":settings.ENVIRONMENT},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:20","message":"Imports successful","data":{"host":"0.0.0.0","port":9000,"environment":settings.ENVIRONMENT},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
     except: pass
     # #endregion
 except ImportError as e:
@@ -40,7 +43,7 @@ if __name__ == "__main__":
     # #region agent log
     try:
         with open(log_path, "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:35","message":"About to call uvicorn.run","data":{"port":8000},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:35","message":"About to call uvicorn.run","data":{"port":9000},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
     except: pass
     # #endregion
     
@@ -48,7 +51,7 @@ if __name__ == "__main__":
         uvicorn.run(
             "app.main:app",
             host="0.0.0.0",
-            port=8000,
+            port=9000,
             reload=settings.ENVIRONMENT == "development",
             log_level="info"
         )

@@ -49,8 +49,10 @@ class Settings(BaseSettings):
     
     # File Storage
     UPLOAD_DIR: str = "./uploads"
+    THUMBNAIL_DIR: str = "./thumbnails"
     MAX_FILE_SIZE_MB: int = 100
-    ALLOWED_EXTENSIONS: List[str] = ["pdf", "docx", "txt", "csv", "eml", "msg"]
+    ALLOWED_EXTENSIONS: List[str] = ["pdf", "docx", "txt", "csv", "eml", "msg", "jpg", "jpeg", "png", "gif", "bmp", "webp"]
+    THUMBNAIL_SIZE: int = 400  # Max width/height in pixels
     
     # Security
     ENCRYPT_FILES: bool = True
@@ -80,8 +82,9 @@ class Settings(BaseSettings):
 # Create settings instance
 settings = Settings()
 
-# Ensure upload directory exists
+# Ensure upload and thumbnail directories exist
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
 
 
 

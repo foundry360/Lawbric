@@ -60,3 +60,4 @@ CREATE TRIGGER on_oauth_connections_updated
   BEFORE UPDATE ON public.oauth_connections
   FOR EACH ROW EXECUTE FUNCTION public.handle_oauth_connections_updated_at();
 
+

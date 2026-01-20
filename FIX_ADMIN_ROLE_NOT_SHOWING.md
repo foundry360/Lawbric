@@ -87,3 +87,5 @@ WHERE email = 'your-email@example.com';
 
 Make sure `role` is exactly `'admin'` (lowercase).
 
+
+

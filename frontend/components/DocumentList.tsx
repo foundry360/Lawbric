@@ -1,9 +1,116 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Document } from '@/lib/api'
+import { Document, documentsApi } from '@/lib/api'
 import { FileText, CheckCircle, Clock, AlertCircle } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000'
+
+const getThumbnailUrl = (document: Document): string | null => {
+  if (!document.thumbnail_path) return null
+  return `${API_URL}/api/v1/documents/${document.id}/thumbnail`
+}
+
+// Component to display thumbnail with fallback
+function ThumbnailImage({ src, alt, fallback }: { src: string; alt: string; fallback: React.ReactNode }) {
+  const [imgSrc, setImgSrc] = useState<string | null>(null)
+  const [imgError, setImgError] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    // Fetch image with authentication token since img src can't send headers
+    let currentObjectUrl: string | null = null
+    
+    const fetchThumbnail = async () => {
+      try {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+        if (!token || token.startsWith('dev-token-') || token.length <= 50) {
+          // No valid token, skip thumbnail
+          setImgError(true)
+          setIsLoading(false)
+          return
+        }
+
+        // Add timeout to prevent infinite loading
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+
+        const response = await fetch(src, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          signal: controller.signal
+        })
+
+        clearTimeout(timeoutId)
+
+        if (!response.ok) {
+          console.error(`Thumbnail fetch failed: ${response.status} ${response.statusText}`)
+          throw new Error(`Failed to fetch thumbnail: ${response.status}`)
+        }
+
+        const blob = await response.blob()
+        if (blob.size === 0) {
+          throw new Error('Thumbnail is empty')
+        }
+
+        currentObjectUrl = URL.createObjectURL(blob)
+        setImgSrc(currentObjectUrl)
+        setIsLoading(false)
+      } catch (error: any) {
+        // Handle timeout
+        if (error.name === 'AbortError') {
+          console.error('Thumbnail fetch timeout:', src)
+        } else {
+          console.error('Error loading thumbnail:', error)
+        }
+        setImgError(true)
+        setIsLoading(false)
+      }
+    }
+
+    fetchThumbnail()
+
+    // Cleanup object URL on unmount or when src changes
+    return () => {
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl)
+      }
+      // Also clean up previous imgSrc if it exists
+      setImgSrc((prev) => {
+        if (prev) {
+          URL.revokeObjectURL(prev)
+        }
+        return null
+      })
+    }
+  }, [src])
+
+  if (imgError || !imgSrc) {
+    return <div className="mt-0.5 flex-shrink-0">{fallback}</div>
+  }
+
+  return (
+    <div className="relative w-12 h-12 mt-0.5 flex-shrink-0 rounded border border-gray-200 bg-gray-50 overflow-hidden">
+      <img
+        src={imgSrc}
+        alt={alt}
+        className="w-full h-full object-cover"
+        onError={() => {
+          setIsLoading(false)
+          setImgError(true)
+        }}
+        style={{ display: isLoading ? 'none' : 'block' }}
+      />
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface DocumentListProps {
   documents: Document[]
@@ -81,7 +188,19 @@ export default function DocumentList({
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <FileText className="w-5 h-5 mt-0.5 flex-shrink-0 text-gray-600" />
+                  {(() => {
+                    const thumbnailUrl = getThumbnailUrl(doc)
+                    if (thumbnailUrl) {
+                      return (
+                        <ThumbnailImage
+                          src={thumbnailUrl}
+                          alt={doc.original_filename}
+                          fallback={<FileText className="w-5 h-5 text-gray-600" />}
+                        />
+                      )
+                    }
+                    return <FileText className="w-5 h-5 mt-0.5 flex-shrink-0 text-gray-600" />
+                  })()}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 min-w-0">
                       <p className="text-xs font-medium text-gray-900 truncate flex-1 min-w-0">

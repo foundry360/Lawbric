@@ -38,6 +38,7 @@ class Document(Base):
     file_type = Column(String, nullable=False)  # pdf, docx, txt, etc.
     file_size = Column(Integer, nullable=False)  # in bytes
     mime_type = Column(String, nullable=True)
+    thumbnail_path = Column(String, nullable=True)  # Path to thumbnail image
     
     # Metadata
     bates_number = Column(String, nullable=True, index=True)
@@ -48,6 +49,7 @@ class Document(Base):
     
     # Processing status
     status = Column(String, default="pending")  # pending, processing, processed, error
+    error_message = Column(Text, nullable=True)  # Error details if processing failed
     page_count = Column(Integer, nullable=True)
     word_count = Column(Integer, nullable=True)
     

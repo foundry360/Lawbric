@@ -4,7 +4,7 @@ import { useState, useEffect, memo } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import { useRouter, usePathname } from 'next/navigation'
-import { PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, LayoutDashboard, Briefcase, Sliders, FolderClosed, FolderOpen, Share2, ShieldCheck, Link as LinkIcon, Settings } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, LayoutDashboard, Briefcase, Sliders, FolderClosed, FolderOpen, Share2, ShieldCheck, Link as LinkIcon, Settings, Blocks } from 'lucide-react'
 import { casesApi, queriesApi, Case, Query } from '@/lib/api'
 import { useDashboard } from '@/lib/dashboard-context'
 
@@ -19,7 +19,12 @@ function Sidebar() {
       const saved = localStorage.getItem('sidebarExpandedCategories')
       if (saved) {
         const categories = JSON.parse(saved) as string[]
-        return new Set(categories)
+        const categorySet = new Set(categories)
+        // Always ensure Cases is expanded by default if not already in the set
+        if (categories.length === 0 || !categorySet.has('Cases')) {
+          categorySet.add('Cases')
+        }
+        return categorySet
       }
     } catch (e) {
       console.warn('Failed to load expanded categories from localStorage:', e)
@@ -49,25 +54,20 @@ function Sidebar() {
   const [caseQueries, setCaseQueries] = useState<Record<string | number, Query[]>>({})
   const [dataLoaded, setDataLoaded] = useState(false)
   
-  // Filter cases to only show those that were recently worked on (have queries in last 30 days)
-  const getRecentlyWorkedOnCases = (): Case[] => {
-    const thirtyDaysAgo = new Date()
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-    
-    return cases.filter((caseItem) => {
-      const queries = caseQueries[caseItem.id] || []
-      // Check if case has any queries created in the last 30 days
-      const hasRecentQueries = queries.some((query) => {
-        const queryDate = new Date(query.created_at)
-        return queryDate >= thirtyDaysAgo
-      })
-      // If no queries loaded yet, show the case (will be filtered once queries load)
-      // Or if case has recent queries, show it
-      return Object.keys(caseQueries).length === 0 || hasRecentQueries
-    })
-  }
+  // Load cases on mount if not already loaded
+  useEffect(() => {
+    refreshCases()
+  }, [refreshCases])
   
-  const recentlyWorkedOnCases = getRecentlyWorkedOnCases()
+  // Show 15 most recent cases, sorted by updated_at (most recent first)
+  const recentlyWorkedOnCases = [...cases]
+    .sort((a, b) => {
+      // Sort by updated_at (most recent first), fallback to created_at
+      const dateA = new Date(a.updated_at || a.created_at || 0).getTime()
+      const dateB = new Date(b.updated_at || b.created_at || 0).getTime()
+      return dateB - dateA // Descending order (newest first)
+    })
+    .slice(0, 15) // Limit to 15 most recent
 
   const toggleCollapse = () => {
     setIsCollapsed(!isCollapsed)
@@ -115,50 +115,19 @@ function Sidebar() {
 
   const [queriesLoaded, setQueriesLoaded] = useState(false)
 
+  // Simplified: Don't load queries for sidebar - just show all cases
+  // Queries will be loaded on the case detail page when needed
   useEffect(() => {
-    // Only load case queries if cases exist and we haven't loaded them yet
+    // Initialize empty queries map for all cases
     if (cases.length > 0 && Object.keys(caseQueries).length === 0) {
-      const loadCaseQueries = async () => {
-        const queriesMap: Record<string | number, Query[]> = {}
-        for (const caseItem of cases) {
-          try {
-            // Convert case ID to number for API call (legacy support)
-            // TODO: Update queries API to use UUID when queries table is migrated
-            const caseId = typeof caseItem.id === 'string' ? parseInt(caseItem.id) : caseItem.id
-            const response = await queriesApi.list(caseId)
-            queriesMap[caseItem.id] = response.data || []
-          } catch (error: any) {
-            // If backend is unavailable, use mock data (dev mode)
-            if (error.code === 'ECONNREFUSED' || error.message?.includes('Network Error') || error.isDevBypass) {
-              // Create mock queries for each case
-              const mockId = typeof caseItem.id === 'string' ? 1 : caseItem.id
-              queriesMap[caseItem.id] = [
-                {
-                  id: mockId * 10 + 1,
-                  question: 'What are the key facts in this case?',
-                  answer: 'Sample answer',
-                  citations: [],
-                  created_at: new Date().toISOString(),
-                },
-                {
-                  id: mockId * 10 + 2,
-                  question: 'Who are the parties involved?',
-                  answer: 'Sample answer',
-                  citations: [],
-                  created_at: new Date(Date.now() - 3600000).toISOString(),
-                },
-              ]
-            } else {
-              queriesMap[caseItem.id] = []
-            }
-          }
-        }
-        setCaseQueries(queriesMap)
-        setQueriesLoaded(true)
-      }
-      loadCaseQueries()
+      const queriesMap: Record<string | number, Query[]> = {}
+      cases.forEach(caseItem => {
+        queriesMap[caseItem.id] = []
+      })
+      setCaseQueries(queriesMap)
+      setQueriesLoaded(true)
     }
-  }, [cases, caseQueries])
+  }, [cases])
 
 
   return (
@@ -354,9 +323,9 @@ function Sidebar() {
                   ? 'text-[#000000] bg-gray-200' 
                   : 'text-[#000000] hover:bg-gray-200'
               }`}
-              title="Connected Apps"
+              title="App Directory"
             >
-              <LinkIcon className="w-5 h-5" style={{ color: pathname === '/connected-apps' ? '#000000' : '#6b7280' }} />
+              <Blocks className="w-5 h-5" style={{ color: pathname === '/connected-apps' ? '#000000' : '#6b7280' }} />
             </Link>
           </>
         ) : (
@@ -393,8 +362,8 @@ function Sidebar() {
                       : 'text-[#000000] hover:bg-gray-200 border-transparent'
                   }`}
                 >
-                  <LinkIcon className="w-4 h-4 flex-shrink-0 text-gray-600" />
-                  <span>Connected Apps</span>
+                  <Blocks className="w-4 h-4 flex-shrink-0 text-gray-600" />
+                  <span>App Directory</span>
                 </Link>
               </div>
             )}

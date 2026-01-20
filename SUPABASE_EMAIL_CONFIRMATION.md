@@ -40,3 +40,5 @@ The code will now show a helpful error message: "Please check your email and con
 4. Check Supabase → Authentication → Users to see the new user
 5. The user should appear immediately after signup
 
+
+
