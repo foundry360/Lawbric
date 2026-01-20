@@ -9,6 +9,9 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
   title: 'Legal Discovery AI Platform',
   description: 'AI-powered legal document discovery and analysis',
+  icons: {
+    icon: '/favicon.ico',
+  },
 }
 
 export default function RootLayout({

@@ -378,15 +378,100 @@ class GoogleDriveService:
             # Get file metadata
             file_metadata = self.get_file_metadata(file_id)
             filename = file_metadata.get('name', 'unknown')
+            mime_type = file_metadata.get('mimeType', '')
             
-            # Download file content
-            request = self.service.files().get_media(fileId=file_id)
+            # Check if this is a Google Workspace file (Docs, Sheets, Slides, etc.)
+            # These need to be exported, not downloaded
+            export_mime_types = {
+                # Google Docs -> DOCX (primary), PDF (fallback)
+                'application/vnd.google-apps.document': [
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'application/pdf'
+                ],
+                # Google Sheets -> XLSX (primary), PDF (fallback)
+                'application/vnd.google-apps.spreadsheet': [
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'application/pdf'
+                ],
+                # Google Slides -> PPTX (primary), PDF (fallback)
+                'application/vnd.google-apps.presentation': [
+                    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    'application/pdf'
+                ],
+                # Google Drawings -> PNG
+                'application/vnd.google-apps.drawing': ['image/png'],
+                # Google Forms -> PDF (may not be supported, fallback to HTML)
+                'application/vnd.google-apps.form': ['application/pdf', 'text/html'],
+                # Google Sites -> HTML (PDF not supported)
+                'application/vnd.google-apps.site': ['text/html'],
+                # Google Apps Script -> JSON
+                'application/vnd.google-apps.script': ['application/vnd.google-apps.script+json'],
+            }
+            
             file_content = io.BytesIO()
-            downloader = MediaIoBaseDownload(file_content, request)
             
-            done = False
-            while not done:
-                status, done = downloader.next_chunk()
+            if mime_type in export_mime_types:
+                # Use Export endpoint for Google Workspace files
+                export_options = export_mime_types[mime_type]
+                export_mime = None
+                export_successful = False
+                
+                # Try each export format until one works
+                for attempt_mime in export_options:
+                    try:
+                        # Export the file
+                        request = self.service.files().export_media(fileId=file_id, mimeType=attempt_mime)
+                        downloader = MediaIoBaseDownload(file_content, request)
+                        
+                        done = False
+                        while not done:
+                            status, done = downloader.next_chunk()
+                        
+                        export_mime = attempt_mime
+                        export_successful = True
+                        break  # Success, exit loop
+                    except Exception as e:
+                        error_str = str(e)
+                        if 'not supported' in error_str.lower() or 'conversion' in error_str.lower():
+                            # This export format isn't supported, try next one
+                            file_content = io.BytesIO()  # Reset for next attempt
+                            continue
+                        else:
+                            # Different error, re-raise
+                            raise
+                
+                if not export_successful:
+                    raise Exception(
+                        f"File type '{mime_type}' does not support any of the available export formats. Supported formats: {', '.join(export_options)}. This file may not be downloadable."
+                    )
+                
+                # Update filename extension based on export type
+                if export_mime == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+                    if not filename.endswith('.docx'):
+                        filename = filename.rsplit('.', 1)[0] + '.docx'
+                elif export_mime == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+                    if not filename.endswith('.xlsx'):
+                        filename = filename.rsplit('.', 1)[0] + '.xlsx'
+                elif export_mime == 'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+                    if not filename.endswith('.pptx'):
+                        filename = filename.rsplit('.', 1)[0] + '.pptx'
+                elif export_mime == 'image/png':
+                    if not filename.endswith('.png'):
+                        filename = filename.rsplit('.', 1)[0] + '.png'
+                elif export_mime == 'application/pdf':
+                    if not filename.endswith('.pdf'):
+                        filename = filename.rsplit('.', 1)[0] + '.pdf'
+                elif export_mime == 'text/html':
+                    if not filename.endswith('.html'):
+                        filename = filename.rsplit('.', 1)[0] + '.html'
+            else:
+                # Use regular download for binary files (PDF, images, DOCX, etc.)
+                request = self.service.files().get_media(fileId=file_id)
+                downloader = MediaIoBaseDownload(file_content, request)
+                
+                done = False
+                while not done:
+                    status, done = downloader.next_chunk()
             
             file_content.seek(0)
             return file_content.read(), filename

@@ -123,7 +123,11 @@ async def get_current_user(
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "Legal Discovery AI Platform"}
+    try:
+        return {"status": "healthy", "service": "Legal Discovery AI Platform"}
+    except Exception as e:
+        logger.error(f"Health check error: {e}", exc_info=True)
+        return {"status": "error", "error": str(e)}
 
 
 # Include API routes

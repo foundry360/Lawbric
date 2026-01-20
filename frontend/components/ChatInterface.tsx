@@ -45,7 +45,18 @@ export default function ChatInterface({
       onQuerySubmit()
     } catch (error: any) {
       console.error('Failed to submit query:', error)
-      alert(error.response?.data?.detail || 'Failed to submit query')
+      // Extract error message properly
+      let errorMessage = 'Failed to submit query'
+      if (error?.response?.data?.detail) {
+        errorMessage = typeof error.response.data.detail === 'string' 
+          ? error.response.data.detail 
+          : JSON.stringify(error.response.data.detail)
+      } else if (error?.message) {
+        errorMessage = error.message
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      }
+      alert(errorMessage)
     } finally {
       setLoading(false)
     }

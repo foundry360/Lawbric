@@ -51,7 +51,11 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     THUMBNAIL_DIR: str = "./thumbnails"
     MAX_FILE_SIZE_MB: int = 100
-    ALLOWED_EXTENSIONS: List[str] = ["pdf", "docx", "txt", "csv", "eml", "msg", "jpg", "jpeg", "png", "gif", "bmp", "webp"]
+    ALLOWED_EXTENSIONS: List[str] = [
+        "pdf", "docx", "gdoc", "xlsx", "gsheet", "gslides", "pptx",
+        "tiff", "tif", "msg", "eml", "xps", "odt", "ods", "epub", "csv",
+        "txt", "jpg", "jpeg", "png", "gif", "bmp", "webp"
+    ]
     THUMBNAIL_SIZE: int = 400  # Max width/height in pixels
     
     # Security
