@@ -22,8 +22,6 @@ export default function DashboardLayout({
   const [isOnline, setIsOnline] = useState(true)
   const [isBackendReachable, setIsBackendReachable] = useState(true)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
-  const [isLoggingOut, setIsLoggingOut] = useState(false)
-
 
   useEffect(() => {
     // Listen for fullscreen changes
@@ -123,17 +121,12 @@ export default function DashboardLayout({
 
   const confirmLogout = async () => {
     setShowLogoutModal(false)
-    setIsLoggingOut(true)
     
-    // Add a smooth fade-out transition
-    await new Promise(resolve => setTimeout(resolve, 300))
-    
+    // Perform logout cleanup
     await logout()
     
-    // Small delay before navigation for smoother transition
-    await new Promise(resolve => setTimeout(resolve, 100))
-    
-    router.push('/')
+    // Subtle redirect to login
+    router.replace('/')
   }
 
   useEffect(() => {
@@ -214,7 +207,7 @@ export default function DashboardLayout({
   
   if (isInitialLoad && loading && !user && (storedToken || (!devBypass && !storedToken)) && !maxLoadingTimeReached) {
     return (
-      <div className={`min-h-screen flex items-center justify-center bg-gray-100 transition-opacity duration-300 ${isLoggingOut ? 'opacity-0' : 'opacity-100'}`}>
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="text-lg text-gray-600">Loading...</div>
       </div>
     )
@@ -227,7 +220,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className={`flex flex-col h-screen bg-gray-100 transition-opacity duration-300 ${isLoggingOut ? 'opacity-0' : 'opacity-100'}`}>
+    <div className="flex flex-col h-screen bg-gray-100">
       {/* Full-width Header */}
       <header className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-6 flex-shrink-0">
         {/* Logo - left justified */}
@@ -372,12 +365,6 @@ export default function DashboardLayout({
         </div>
       )}
 
-      {/* Logout Transition Overlay */}
-      {isLoggingOut && (
-        <div className="fixed inset-0 bg-white z-[100] flex items-center justify-center transition-opacity duration-300">
-          <div className="text-lg text-gray-600">Logging out...</div>
-        </div>
-      )}
     </div>
   )
 }

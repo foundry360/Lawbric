@@ -8,7 +8,8 @@ import DocumentViewer from '@/components/DocumentViewer'
 import DocumentList from '@/components/DocumentList'
 import MindmapViewer from '@/components/MindmapViewer'
 import GoogleDrivePicker from '@/components/GoogleDrivePicker'
-import { Upload, FileText, Share2, Loader2, AlertCircle, X, Search } from 'lucide-react'
+import ProcessingStatusContainer from '@/components/ProcessingStatusContainer'
+import { Upload, FileText, Share2, Loader2, AlertCircle, X, Search, ArrowLeft, Wand2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useDashboard } from '@/lib/dashboard-context'
 import Image from 'next/image'
@@ -28,13 +29,18 @@ export default function CasePage() {
   const [loading, setLoading] = useState(true)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [activeView, setActiveView] = useState<'documents' | 'mindmap' | 'summary'>('documents')
+  const [activeView, setActiveView] = useState<'documents' | 'mindmap'>('documents')
   const [uploadTab, setUploadTab] = useState<'computer' | 'drive'>('computer')
   const [googleDriveConnected, setGoogleDriveConnected] = useState(false)
   const [selectedDriveFiles, setSelectedDriveFiles] = useState<string[]>([])
   const [importingDriveFiles, setImportingDriveFiles] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [driveSearchQuery, setDriveSearchQuery] = useState('')
+  const [processingDocuments, setProcessingDocuments] = useState<Map<string | number, {
+    id: string | number
+    document: Document | { id: string | number; status?: string; original_filename?: string; [key: string]: any }
+    caseId: string | number
+  }>>(new Map())
   const { refreshCases } = useDashboard()
 
   useEffect(() => {
@@ -111,7 +117,7 @@ export default function CasePage() {
         if (error) throw error
         
         if (data) {
-          setDocuments(data.map(doc => ({
+          const loadedDocs = data.map(doc => ({
             id: doc.id,
             case_id: doc.case_id,
             filename: doc.filename || '',
@@ -121,12 +127,35 @@ export default function CasePage() {
             status: doc.status || 'pending',
             uploaded_at: doc.uploaded_at || doc.created_at,
             page_count: doc.page_count || 0,
+            word_count: doc.word_count || 0,
             bates_number: doc.bates_number || undefined,
             author: doc.author || undefined,
             requires_ocr: doc.requires_ocr || false,
             view_count: doc.view_count || 0,
             metadata: doc.metadata || {}
-          })))
+          }))
+          setDocuments(loadedDocs)
+          
+          // Track processing documents - merge with existing to avoid overwriting
+          setProcessingDocuments(prev => {
+            const newMap = new Map(prev) // Start with existing map
+            loadedDocs.forEach(doc => {
+              if (doc.status === 'processing' || doc.status === 'pending') {
+                // Only update if not already tracking, or update if status changed
+                newMap.set(doc.id, {
+                  id: doc.id,
+                  document: doc,
+                  caseId: caseId
+                })
+              } else if (doc.status === 'processed' || doc.status === 'error') {
+                // Remove from tracking when done
+                newMap.delete(doc.id)
+              }
+            })
+            console.log('loadDocuments: Updated processing map, size:', newMap.size)
+            return new Map(newMap) // Force new reference
+          })
+          
           setLoading(false)
           return
         }
@@ -137,6 +166,26 @@ export default function CasePage() {
         const response = await documentsApi.list(caseId as number)
         if (response.data) {
           setDocuments(response.data)
+          
+          // Track processing documents - merge with existing
+          setProcessingDocuments(prev => {
+            const newMap = new Map(prev) // Start with existing map
+            response.data.forEach((doc: Document) => {
+              if (doc.status === 'processing' || doc.status === 'pending') {
+                newMap.set(doc.id, {
+                  id: doc.id,
+                  document: doc,
+                  caseId: caseId
+                })
+              } else if (doc.status === 'processed' || doc.status === 'error') {
+                // Remove from tracking when done
+                newMap.delete(doc.id)
+              }
+            })
+            console.log('loadDocuments (API): Updated processing map, size:', newMap.size)
+            return new Map(newMap) // Force new reference
+          })
+          
           setLoading(false)
           return
         }
@@ -256,13 +305,79 @@ export default function CasePage() {
     try {
       // Import files using backend API
       // Backend accepts UUID case IDs
+      const importedDocuments: any[] = []
       for (const fileId of selectedDriveFiles) {
-        await integrationsApi.google.importFile(
-          caseIdParam, // Use the string ID (UUID or number as string)
-          fileId
-        )
+        try {
+          const response = await integrationsApi.google.importFile(
+            caseIdParam, // Use the string ID (UUID or number as string)
+            fileId
+          )
+          console.log('Import response:', response)
+          // axios response has data property - FastAPI returns dict directly
+          const docData = response?.data
+          console.log('Document data:', docData, 'type:', typeof docData)
+            // Accept the document regardless of status - we'll check in the next step
+            if (docData) {
+            importedDocuments.push(docData)
+            console.log('Added to importedDocuments, status:', docData.status, 'id:', docData.id)
+          } else {
+            console.warn('Document not in processing state:', docData?.status)
+          }
+        } catch (error) {
+          console.error(`Failed to import file ${fileId}:`, error)
+          // Continue with other files even if one fails
+        }
       }
-      loadDocuments()
+      
+      console.log('All imported documents:', importedDocuments)
+      console.log('Processing documents before update:', processingDocuments.size)
+      
+      // Immediately track imported documents that are processing
+      if (importedDocuments.length > 0) {
+        console.log('Setting processing documents, count:', importedDocuments.length)
+        setProcessingDocuments(prev => {
+          // Always create a new Map to ensure React detects the change
+          const newMap = new Map(prev)
+          console.log('Updating processing documents map, prev size:', prev.size)
+          importedDocuments.forEach(doc => {
+            console.log('Checking document:', doc.id, 'status:', doc.status, 'full doc:', doc)
+            // Accept both 'processing' and 'pending' status
+            if (doc.status === 'processing' || doc.status === 'pending') {
+              const trackingItem = {
+                id: doc.id,
+                document: {
+                  id: doc.id,
+                  case_id: doc.case_id,
+                  filename: doc.filename || '',
+                  original_filename: doc.original_filename || doc.filename || '',
+                  file_type: doc.file_type || 'pdf',
+                  file_size: doc.file_size || 0,
+                  status: doc.status || 'processing',
+                  uploaded_at: new Date().toISOString(),
+                  page_count: 0,
+                  word_count: 0
+                },
+                caseId: caseId
+              }
+              newMap.set(doc.id, trackingItem)
+              console.log('Added document to tracking map:', doc.id, 'map size now:', newMap.size)
+            } else {
+              console.warn('Document status is not processing/pending:', doc.status)
+            }
+          })
+          console.log('Final new map size:', newMap.size, 'keys:', Array.from(newMap.keys()))
+          // Force a new Map reference by spreading
+          return new Map(newMap)
+        })
+      } else {
+        console.warn('No imported documents to track!')
+      }
+      
+      // Wait a moment before loading documents to ensure the backend has created the document
+      setTimeout(() => {
+        loadDocuments()
+      }, 500)
+      
       setShowUploadModal(false)
       setSelectedDriveFiles([])
       setUploadTab('computer')
@@ -333,47 +448,46 @@ export default function CasePage() {
       {/* Case Header */}
       <div className="border-b border-gray-200 px-6 py-4 relative">
         <div className="flex items-center justify-between">
-          {/* View Switcher Tabs */}
-          <div className="flex items-center gap-1">
+          {/* Back Button and View Switcher Tabs */}
+          <div className="flex items-center gap-4">
+            {/* Back Arrow and Cases Link */}
             <button
-              onClick={() => setActiveView('documents')}
-              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                activeView === 'documents'
-                  ? 'text-gray-900'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
+              onClick={() => router.push('/workspace')}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors px-3 py-1.5 rounded-lg hover:bg-gray-100"
             >
-              Documents
-              {activeView === 'documents' && (
-                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-black"></div>
-              )}
+              <ArrowLeft className="w-4 h-4" />
+              <span className="text-sm font-medium">Cases</span>
             </button>
-            <button
-              onClick={() => setActiveView('mindmap')}
-              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                activeView === 'mindmap'
-                  ? 'text-gray-900'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Mindmap
-              {activeView === 'mindmap' && (
-                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-black"></div>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveView('summary')}
-              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                activeView === 'summary'
-                  ? 'text-gray-900'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Case Summary
-              {activeView === 'summary' && (
-                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-black"></div>
-              )}
-            </button>
+            
+            {/* View Switcher Tabs */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setActiveView('documents')}
+                className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                  activeView === 'documents'
+                    ? 'text-gray-900'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Documents
+                {activeView === 'documents' && (
+                  <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-black"></div>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveView('mindmap')}
+                className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                  activeView === 'mindmap'
+                    ? 'text-gray-900'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Mindmap
+                {activeView === 'mindmap' && (
+                  <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-black"></div>
+                )}
+              </button>
+            </div>
           </div>
           
           {/* Case Name - Centered */}
@@ -393,6 +507,12 @@ export default function CasePage() {
               title="Share"
             >
               <Share2 className="w-5 h-5 text-gray-600" />
+            </button>
+            <button
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title="AI Assistant"
+            >
+              <Wand2 className="w-5 h-5 text-gray-600" />
             </button>
             <button
               onClick={() => setShowUploadModal(true)}
@@ -423,10 +543,24 @@ export default function CasePage() {
             <div className="flex-1 overflow-hidden flex">
               {/* Document List */}
               <div className="border-r border-gray-200 overflow-y-auto" style={{ width: '35.71%' }}>
-                <DocumentList
+                  <DocumentList
                   documents={documents}
                   selectedDocument={selectedDocument}
-                  onSelectDocument={setSelectedDocument}
+                  onSelectDocument={(doc) => {
+                    setSelectedDocument(doc)
+                    // If document is processing, add to tracking
+                    if (doc.status === 'processing') {
+                      setProcessingDocuments(prev => {
+                        const newMap = new Map(prev)
+                        newMap.set(doc.id, {
+                          id: doc.id,
+                          document: doc,
+                          caseId: caseId
+                        })
+                        return newMap
+                      })
+                    }
+                  }}
                 />
               </div>
               
@@ -475,17 +609,6 @@ export default function CasePage() {
         </div>
       )}
 
-      {activeView === 'summary' && (
-        <div className="flex-1 overflow-hidden">
-          {/* Case Summary component will go here */}
-          <div className="h-full flex items-center justify-center text-gray-500">
-            <div className="text-center">
-              <p className="text-lg mb-2">Case Summary View</p>
-              <p className="text-sm">Coming soon...</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Upload Modal */}
       {showUploadModal && (
@@ -656,6 +779,35 @@ export default function CasePage() {
           </div>
         </div>
       )}
+
+      {/* Processing Status Container */}
+      <ProcessingStatusContainer
+        processingDocuments={processingDocuments}
+        onDocumentStatusChange={(documentId, status) => {
+          // Update or remove from tracking based on status
+          setProcessingDocuments(prev => {
+            const newMap = new Map(prev)
+            if (status === 'processed' || status === 'error' || status === 'closed') {
+              newMap.delete(documentId)
+            } else if (status === 'processing') {
+              const item = newMap.get(documentId)
+              if (item) {
+                // Update document status
+                newMap.set(documentId, {
+                  ...item,
+                  document: { ...item.document, status }
+                })
+              }
+            }
+            return newMap
+          })
+          
+          // Refresh documents list to get updated status
+          if (status === 'processed' || status === 'error') {
+            loadDocuments()
+          }
+        }}
+      />
     </div>
   )
 }

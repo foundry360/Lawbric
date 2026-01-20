@@ -2,11 +2,11 @@
 
 import { useState } from 'react'
 import { Document, documentsApi } from '@/lib/api'
-import { FileText, Calendar, User, Hash, MoreVertical, X, Eye } from 'lucide-react'
+import { FileText, Calendar, User, Hash, MoreVertical, X, Eye, AlertCircle } from 'lucide-react'
 import { format } from 'date-fns'
 
 interface DocumentViewerProps {
-  document: Document
+  document: Document | { id: string | number; [key: string]: any } // Support both UUID and integer IDs
   onDocumentDeleted?: () => void
 }
 
@@ -109,6 +109,21 @@ export default function DocumentViewer({ document, onDocumentDeleted }: Document
           </div>
         )}
 
+        {/* Error Message */}
+        {document.status === 'error' && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-red-900 mb-1">Processing Error</h3>
+                <p className="text-sm text-red-800">
+                  {document.error_message || 'An error occurred while processing this document. Please try reprocessing or re-uploading.'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Document Preview */}
         <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
           <p className="text-sm text-gray-600 mb-4">
@@ -169,7 +184,22 @@ export default function DocumentViewer({ document, onDocumentDeleted }: Document
                   if (deleteConfirmText.toLowerCase() === 'delete') {
                     setIsDeleting(true)
                     try {
-                      await documentsApi.delete(document.id)
+                      // Check if document ID is a UUID (string) or integer
+                      const docId = document.id
+                      if (typeof docId === 'string' && docId.includes('-')) {
+                        // UUID - delete from Supabase
+                        const { supabase } = await import('@/lib/supabase')
+                        const { error } = await supabase
+                          .from('documents')
+                          .delete()
+                          .eq('id', docId)
+                        
+                        if (error) throw error
+                      } else {
+                        // Integer ID - delete from backend API
+                        await documentsApi.delete(Number(docId))
+                      }
+                      
                       setShowDeleteModal(false)
                       setDeleteConfirmText('')
                       if (onDocumentDeleted) {
@@ -177,7 +207,18 @@ export default function DocumentViewer({ document, onDocumentDeleted }: Document
                       }
                     } catch (error: any) {
                       console.error('Failed to delete document:', error)
-                      alert(error.response?.data?.detail || 'Failed to delete document')
+                      // Extract error message properly
+                      let errorMessage = 'Failed to delete document'
+                      if (error?.response?.data?.detail) {
+                        errorMessage = typeof error.response.data.detail === 'string' 
+                          ? error.response.data.detail 
+                          : JSON.stringify(error.response.data.detail)
+                      } else if (error?.message) {
+                        errorMessage = error.message
+                      } else if (typeof error === 'string') {
+                        errorMessage = error
+                      }
+                      alert(errorMessage)
                     } finally {
                       setIsDeleting(false)
                     }

@@ -10,10 +10,13 @@ import os
 import shutil
 from pathlib import Path
 from datetime import datetime
+import threading
+import traceback
 
 from app.core.database import get_db, SessionLocal
 from app.core.config import settings
 from app.core.security import verify_token
+from app.core.supabase import get_supabase_client
 from app.models.case import Case, Document, DocumentChunk
 from app.schemas.case import DocumentResponse, DocumentCreate
 from app.services.document_processor import DocumentProcessor
@@ -52,13 +55,27 @@ vector_store = VectorStore()
 
 async def get_current_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> int:
-    """Get current user ID from token"""
+) -> str:
+    """Get current user ID from Supabase token"""
     token = credentials.credentials
-    payload = verify_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return int(payload.get("sub"))
+    supabase = get_supabase_client()
+    
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+    
+    try:
+        # Verify token with Supabase
+        response = supabase.auth.get_user(token)
+        if not response.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Return user ID as string (UUID from Supabase)
+        return response.user.id
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 def process_document_background(document_id: int, file_path: str, file_ext: str, case_id: int):
@@ -66,16 +83,17 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
     Background task to process a document asynchronously
     This function runs in a separate thread/process after the upload endpoint returns
     """
+    thread_name = threading.current_thread().name
     # #region agent log
     agent_log("debug-session", "run1", "B", "documents.py:44", "Background task function ENTERED", {
         "document_id": document_id,
         "file_path": file_path,
         "file_ext": file_ext,
         "case_id": case_id,
-        "thread_name": threading.current_thread().name
+        "thread_name": thread_name
     })
     # #endregion
-    logger.info(f"=== BACKGROUND TASK STARTED for document {document_id} ===")
+    logger.info(f"=== BACKGROUND TASK STARTED for document {document_id} in thread {thread_name} ===")
     logger.info(f"Parameters: file_path={file_path}, file_ext={file_ext}, case_id={case_id}")
     
     # Create a new database session for the background task
@@ -304,11 +322,13 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
             "document_id": document_id,
             "error_type": type(e).__name__,
             "error_message": str(e),
-            "db_is_none": db is None
+            "db_is_none": db is None,
+            "traceback": traceback.format_exc()
         })
         # #endregion
         logger.error(f"=== ERROR processing document {document_id} ===", exc_info=True)
         logger.error(f"Error type: {type(e).__name__}, Error message: {str(e)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         # Update document status to error with error message
         try:
             if db is None:
@@ -357,7 +377,7 @@ async def upload_document(
     document_date: Optional[str] = Form(None),
     source: Optional[str] = Form(None),
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user_id)
 ):
     """Upload and process a document"""
     # Verify case exists
@@ -424,9 +444,8 @@ async def upload_document(
     # Process document asynchronously in background using threading
     # Using threading instead of BackgroundTasks for more reliable execution
     # FastAPI BackgroundTasks may not execute in all setups
-    import threading
     
-    # Run in a daemon thread to ensure it executes reliably
+    # Run in a non-daemon thread to ensure it completes (daemon threads can be killed)
     # #region agent log
     agent_log("debug-session", "run1", "A", "documents.py:315", "Creating background thread", {
         "document_id": document.id,
@@ -435,10 +454,27 @@ async def upload_document(
         "case_id": case_id
     })
     # #endregion
+    # Wrap the background function to ensure exceptions are logged
+    def wrapped_process():
+        try:
+            process_document_background(document.id, file_path, file_ext, case_id)
+        except Exception as e:
+            logger.error(f"CRITICAL: Background thread for document {document.id} failed with uncaught exception: {e}", exc_info=True)
+            # Try to update status to error
+            try:
+                error_db = SessionLocal()
+                error_doc = error_db.query(Document).filter(Document.id == document.id).first()
+                if error_doc:
+                    error_doc.status = "error"
+                    error_doc.error_message = f"Critical error: {str(e)[:500]}"
+                    error_db.commit()
+                error_db.close()
+            except Exception as db_error:
+                logger.error(f"Failed to update error status: {db_error}", exc_info=True)
+    
     thread = threading.Thread(
-        target=process_document_background,
-        args=(document.id, file_path, file_ext, case_id),
-        daemon=True,
+        target=wrapped_process,
+        daemon=False,  # Non-daemon so it completes
         name=f"doc-processor-{document.id}"
     )
     # #region agent log
@@ -465,7 +501,7 @@ async def upload_document(
 async def get_document_thumbnail(
     document_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user_id)
 ):
     """Get thumbnail image for a document"""
     from fastapi.responses import FileResponse
@@ -502,7 +538,7 @@ async def get_document_thumbnail(
 async def list_documents(
     case_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id),
     skip: int = 0,
     limit: int = 100
 ):
@@ -517,7 +553,7 @@ async def list_documents(
 async def get_document(
     document_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user_id)
 ):
     """Get a specific document"""
     document = db.query(Document).filter(Document.id == document_id).first()
@@ -530,7 +566,7 @@ async def get_document(
 async def delete_document(
     document_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user_id)
 ):
     """Delete a document"""
     document = db.query(Document).filter(Document.id == document_id).first()
@@ -565,7 +601,7 @@ async def reprocess_document(
     document_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user_id)
 ):
     """Reprocess a failed or existing document"""
     document = db.query(Document).filter(Document.id == document_id).first()
@@ -611,14 +647,17 @@ async def reprocess_document(
     
     logger.info(f"Reprocessing document {document_id}")
     
-    # Queue for reprocessing
-    background_tasks.add_task(
-        process_document_background,
-        document_id=document.id,
-        file_path=document.file_path,
-        file_ext=document.file_type,
-        case_id=document.case_id
+    # Queue for reprocessing using threading (consistent with upload endpoint)
+    import threading
+    
+    thread = threading.Thread(
+        target=process_document_background,
+        args=(document.id, document.file_path, document.file_type, document.case_id),
+        daemon=True,
+        name=f"doc-reprocessor-{document.id}"
     )
+    thread.start()
+    logger.info(f"Document {document.id} reprocessing started in thread {thread.name}")
     
     return document
 

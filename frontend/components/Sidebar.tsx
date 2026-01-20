@@ -225,7 +225,7 @@ function Sidebar() {
           <a
             href="#"
             className="flex items-center justify-center px-4 py-3 mb-1 rounded-lg text-[#000000] hover:bg-gray-200"
-            title="Cases"
+            title="Recent Cases"
           >
             <FolderClosed className="w-5 h-5" style={{ color: '#6b7280' }} />
           </a>
@@ -235,7 +235,7 @@ function Sidebar() {
               onClick={() => toggleCategory('Cases')}
               className="w-full flex items-center justify-between px-3 py-1 text-[12px] font-semibold text-gray-500 uppercase tracking-wider hover:text-[#000000]"
             >
-              <span>Cases</span>
+              <span>RECENT CASES</span>
               {expandedCategories.has('Cases') ? (
                 <ChevronUp className="w-4 h-4" style={{ color: '#000000' }} />
               ) : (

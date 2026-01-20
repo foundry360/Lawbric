@@ -8,14 +8,253 @@ from fastapi.responses import Response
 from typing import Optional
 from urllib.parse import urlencode
 import httpx
+import threading
+import logging
+import traceback
+import os
+from datetime import datetime
 
 from app.core.supabase import get_supabase_client
 from app.core.config import settings
 from app.core.supabase_db import get_oauth_connection, create_oauth_connection, delete_oauth_connection
 from app.services.google_drive_service import GoogleDriveService
+from app.services.document_processor import DocumentProcessor
+from app.services.embedding_service import EmbeddingService
+from app.services.vector_store import VectorStore
 
 router = APIRouter()
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
+
+# Initialize services
+processor = DocumentProcessor()
+embedding_service = EmbeddingService()
+vector_store = VectorStore()
+
+
+def process_supabase_document_background(document_id: str, file_path: str, file_ext: str, case_id: str):
+    """
+    Background task to process a Supabase document asynchronously
+    Works with UUID document IDs and Supabase database
+    """
+    thread_name = threading.current_thread().name
+    logger.info(f"=== SUPABASE BACKGROUND TASK STARTED for document {document_id} in thread {thread_name} ===")
+    logger.info(f"Parameters: file_path={file_path}, file_ext={file_ext}, case_id={case_id}")
+    
+    supabase = get_supabase_client()
+    if not supabase:
+        logger.error("Supabase client not available for background processing")
+        return
+    
+    try:
+        # Verify file exists
+        if not os.path.exists(file_path):
+            logger.error(f"Document file not found: {file_path}")
+            supabase.table('documents').update({
+                'status': 'error',
+                'error_message': f'File not found: {file_path}'
+            }).eq('id', document_id).execute()
+            return
+        
+        # Step 0: Generate thumbnail
+        logger.info(f"Generating thumbnail for document {document_id}")
+        thumbnail_path = None
+        try:
+            os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
+            thumbnail_filename = f"thumb_{document_id}.jpg"
+            thumbnail_output_path = os.path.join(settings.THUMBNAIL_DIR, thumbnail_filename)
+            thumbnail_output_path = os.path.abspath(thumbnail_output_path)
+            
+            if processor.generate_thumbnail(file_path, file_ext, thumbnail_output_path):
+                if os.path.exists(thumbnail_output_path):
+                    thumbnail_path = thumbnail_output_path
+                    supabase.table('documents').update({
+                        'thumbnail_path': thumbnail_path
+                    }).eq('id', document_id).execute()
+                    logger.info(f"Thumbnail generated for document {document_id}")
+        except Exception as e:
+            logger.warning(f"Failed to generate thumbnail: {e}", exc_info=True)
+        
+        # Step 1: Extract text
+        logger.info(f"Extracting text from document {document_id}")
+        processed = processor.process_document(file_path, file_ext)
+        logger.info(f"Processor returned: page_count={processed.get('page_count')}, requires_ocr={processed.get('requires_ocr')}")
+        
+        # Update document with extraction results
+        extracted_text = processed["text"]
+        page_count = processed["page_count"]
+        word_count = len(extracted_text.split())
+        requires_ocr = processed["requires_ocr"]
+        ocr_completed = not requires_ocr or all(
+            page.get("method") == "ocr" for page in processed.get("pages", [])
+        )
+        
+        supabase.table('documents').update({
+            'extracted_text': extracted_text,
+            'page_count': page_count,
+            'word_count': word_count,
+            'requires_ocr': requires_ocr,
+            'ocr_completed': ocr_completed
+        }).eq('id', document_id).execute()
+        
+        logger.info(f"Text extraction completed: {page_count} pages, {word_count} words")
+        
+        # Step 2: Chunk text
+        logger.info(f"Chunking text for document {document_id}")
+        page_mapping = []
+        if processed.get("pages"):
+            current_char = 0
+            for page_info in processed["pages"]:
+                page_num = page_info.get("page_number", 1)
+                page_text = page_info.get("text", "")
+                page_start = current_char
+                page_end = current_char + len(page_text)
+                page_mapping.append({
+                    "page": page_num,
+                    "start": page_start,
+                    "end": page_end
+                })
+                current_char = page_end + 2
+        
+        chunks = processor.chunk_text(
+            extracted_text,
+            page_mapping=page_mapping if page_mapping else None
+        )
+        logger.info(f"Created {len(chunks)} chunks")
+        
+        # Step 3: Generate embeddings
+        logger.info(f"Generating embeddings for document {document_id}")
+        chunk_texts = [chunk["content"] for chunk in chunks]
+        embeddings = embedding_service.embed_texts(chunk_texts)
+        logger.info(f"Generated {len(embeddings)} embeddings")
+        
+        # Step 4: Store chunks in Supabase and prepare vector store data
+        logger.info(f"Saving chunks for document {document_id}")
+        chunk_metadata_list = []
+        
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            embedding_id = f"chunk_{document_id}_{i}"
+            
+            # Save chunk to Supabase (assuming you have a document_chunks table)
+            chunk_data = {
+                'document_id': document_id,
+                'chunk_index': chunk["chunk_index"],
+                'content': chunk["content"],
+                'page_number': chunk.get("page_number"),
+                'start_char': chunk["start_char"],
+                'end_char': chunk["end_char"],
+                'embedding_id': embedding_id
+            }
+            
+            try:
+                supabase.table('document_chunks').insert(chunk_data).execute()
+            except Exception as e:
+                logger.warning(f"Failed to insert chunk to Supabase (table may not exist): {e}")
+            
+            # Prepare metadata for vector store
+            metadata = {
+                "chunk_id": i,
+                "document_id": document_id,
+                "document_name": file_path.split(os.sep)[-1],  # filename
+                "case_id": case_id,
+                "page_number": chunk.get("page_number"),
+                "chunk_index": chunk["chunk_index"]
+            }
+            chunk_metadata_list.append(metadata)
+        
+        # Step 5: Add to vector store
+        logger.info(f"Storing embeddings in vector store")
+        chunk_docs = [{"content": chunk["content"]} for chunk in chunks]
+        vector_store.add_documents(chunk_docs, embeddings, chunk_metadata_list)
+        
+        # Step 6: Update document status to processed
+        supabase.table('documents').update({
+            'status': 'processed',
+            'processed_at': datetime.utcnow().isoformat()
+        }).eq('id', document_id).execute()
+        
+        logger.info(f"Document {document_id} processed successfully")
+        
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error processing document {document_id}: {error_msg}", exc_info=True)
+        traceback.print_exc()
+        # Update document status to error
+        # Note: Supabase may not have error_message column, so we just set status
+        try:
+            update_data = {'status': 'error'}
+            supabase.table('documents').update(update_data).eq('id', document_id).execute()
+            logger.info(f"Document {document_id} status updated to 'error'. Error: {error_msg}")
+        except Exception as update_error:
+            logger.error(f"Failed to update error status: {update_error}")
+
+
+@router.post("/documents/{document_id}/reprocess")
+async def reprocess_supabase_document(
+    document_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Reprocess a failed Supabase document"""
+    # Get user ID from token - get_current_user_id is defined later in this file
+    # Import it or use inline verification
+    from app.core.supabase import get_supabase_client as get_supabase
+    supabase_client = get_supabase()
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+    
+    # Verify token with Supabase
+    token = credentials.credentials
+    try:
+        user_response = supabase_client.auth.get_user(token)
+        if not user_response or not user_response.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        user_id = user_response.user.id
+    except Exception as e:
+        logger.error(f"Token verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    try:
+        # Get document from Supabase
+        response = supabase.table('documents').select('*').eq('id', document_id).single().execute()
+        document = response.data if hasattr(response, 'data') else None
+        
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Verify file exists
+        file_path = document.get('file_path')
+        if not file_path or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Document file not found on disk")
+        
+        # Update status to processing
+        supabase.table('documents').update({
+            'status': 'processing',
+            'processed_at': None
+        }).eq('id', document_id).execute()
+        
+        # Start background processing
+        file_ext = document.get('file_type', '')
+        case_id = document.get('case_id', '')
+        
+        thread = threading.Thread(
+            target=process_supabase_document_background,
+            args=(document_id, file_path, file_ext, case_id),
+            daemon=False
+        )
+        thread.start()
+        logger.info(f"Started reprocessing thread for document {document_id}")
+        
+        return {
+            "id": document_id,
+            "status": "processing",
+            "message": "Document reprocessing started"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reprocessing document {document_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
@@ -603,9 +842,15 @@ async def import_google_file(
         if not document:
             raise HTTPException(status_code=500, detail="Failed to create document record")
         
-        # Process document in background (similar to upload endpoint)
-        # Note: This would need to be adapted for Supabase document processing
-        # For now, we'll return the document
+        # Process document in background for Supabase
+        document_id = document['id']
+        thread = threading.Thread(
+            target=process_supabase_document_background,
+            args=(document_id, file_path, file_ext, case_id),
+            daemon=False
+        )
+        thread.start()
+        logger.info(f"Started background processing thread for document {document_id}")
         
         return {
             "id": document['id'],

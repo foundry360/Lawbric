@@ -89,8 +89,8 @@ export interface Case {
 }
 
 export interface Document {
-  id: number
-  case_id: number
+  id: number | string  // Support both UUID (string) and integer IDs
+  case_id: number | string
   filename: string
   original_filename: string
   file_type: string
@@ -105,6 +105,7 @@ export interface Document {
   requires_ocr?: boolean
   uploaded_at: string
   view_count?: number
+  error_message?: string
   metadata?: {
     custodian?: string
     document_date?: string
