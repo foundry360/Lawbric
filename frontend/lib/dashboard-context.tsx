@@ -1,8 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, ReactNode, useRef, useCallback } from 'react'
-import { Case } from '@/lib/api'
-import { supabase } from '@/lib/supabase'
+import { Case, casesApi } from '@/lib/api'
 
 interface DashboardContextType {
   cases: Case[]
@@ -13,19 +12,6 @@ interface DashboardContextType {
 }
 
 const DashboardContext = createContext<DashboardContextType | undefined>(undefined)
-
-// Map Supabase case to Case interface
-const mapSupabaseCase = (supabaseCase: any): Case => {
-  return {
-    id: supabaseCase.id,
-    name: supabaseCase.name,
-    case_number: supabaseCase.case_number || undefined,
-    description: supabaseCase.description || undefined,
-    created_at: supabaseCase.created_at,
-    updated_at: supabaseCase.updated_at || undefined,
-    is_active: supabaseCase.is_active !== false
-  }
-}
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [cases, setCases] = useState<Case[]>([])
@@ -42,20 +28,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     isLoadingRef.current = true
     setIsLoading(true)
     try {
-      // Fetch cases from Supabase
-      const { data, error } = await supabase
-        .from('cases')
-        .select('*')
-        .eq('is_active', true)
-        .order('updated_at', { ascending: false, nullsFirst: false })
-      
-      if (error) {
-        console.error('Failed to load cases from Supabase:', error)
-        throw error
-      }
-      
-      // Map Supabase cases to Case interface
-      let casesData = (data || []).map(mapSupabaseCase)
+      // Fetch cases from API
+      const response = await casesApi.list()
+      let casesData = response.data || []
       
       // Sort by updated_at (most recent first), fallback to created_at if updated_at is null
       casesData.sort((a, b) => {
@@ -68,7 +43,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       hasLoadedRef.current = true
     } catch (error: any) {
       console.error('Failed to load cases:', error)
-      // If Supabase is not available, set empty array
+      console.error('Error details:', error.response?.data || error.message)
+      // If API is not available, set empty array
       setCases([])
       hasLoadedRef.current = true // Mark as loaded even with empty array
     } finally {

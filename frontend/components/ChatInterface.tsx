@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { queriesApi, Query, Citation } from '@/lib/api'
+import { queriesApi, caseNotesApi, Query, Citation } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
-import { Send, FileText, MessageSquare } from 'lucide-react'
+import { Send, FileText, MessageSquare, BookOpen } from 'lucide-react'
 
 interface ChatInterfaceProps {
   caseId: number
@@ -62,6 +62,43 @@ export default function ChatInterface({
     }
   }
 
+  const handleSaveAsCaseNote = async (query: Query) => {
+    try {
+      // Extract source document links from citations
+      let sourceDocumentLinks = null
+      if (query.citations && query.citations.length > 0) {
+        const links = query.citations.map(citation => ({
+          document_id: citation.document_id,
+          document_name: citation.document_name,
+          page_number: citation.page_number,
+          page_range: citation.page_number ? `${citation.page_number}` : null
+        }))
+        sourceDocumentLinks = JSON.stringify(links)
+      }
+      
+      await caseNotesApi.create(caseId, {
+        title: query.question,
+        content: query.answer,
+        source_query_id: query.id,
+        note_type: 'ai_generated',
+        is_non_authoritative: true, // AI-generated notes are working notes
+        source_document_links: sourceDocumentLinks || undefined
+      })
+      alert('Case note saved successfully!')
+    } catch (error: any) {
+      console.error('Failed to save case note:', error)
+      let errorMessage = 'Failed to save case note'
+      if (error?.response?.data?.detail) {
+        errorMessage = typeof error.response.data.detail === 'string' 
+          ? error.response.data.detail 
+          : JSON.stringify(error.response.data.detail)
+      } else if (error?.message) {
+        errorMessage = error.message
+      }
+      alert(errorMessage)
+    }
+  }
+
   return (
     <div className="h-full flex flex-col bg-white">
       {/* Chat Header */}
@@ -89,6 +126,17 @@ export default function ChatInterface({
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="prose prose-sm max-w-none">
                   <ReactMarkdown>{query.answer}</ReactMarkdown>
+                </div>
+
+                {/* Save as Case Note Button */}
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={() => handleSaveAsCaseNote(query)}
+                    className="px-3 py-1.5 text-sm bg-black text-white rounded-lg hover:bg-gray-800 flex items-center gap-2"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    Save as Case Note
+                  </button>
                 </div>
 
                 {/* Citations */}

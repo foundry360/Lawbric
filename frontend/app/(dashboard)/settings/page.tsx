@@ -5,18 +5,8 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 
-// Import User type from auth
-type User = {
-  id: string | number
-  email: string
-  role: string
-  title?: string
-  full_name?: string
-  avatar_url?: string
-}
 import { usersApi, AppUser } from '@/lib/api'
-import { mapSupabaseUserWithProfile, getCurrentUser } from '@/lib/supabase-auth'
-import { supabase } from '@/lib/supabase'
+import api from '@/lib/api'
 import Image from 'next/image'
 import { Settings, ArrowLeft, Trash2, X, Camera, MoreVertical, Edit } from 'lucide-react'
 
@@ -29,7 +19,7 @@ export default function SettingsPage() {
   const [notifications, setNotifications] = useState(true)
   const [emailUpdates, setEmailUpdates] = useState(false)
   const [theme, setTheme] = useState('light')
-  const [displayUser, setDisplayUser] = useState(user) // Local state to hold fresh profile data
+  const [displayUser, setDisplayUser] = useState<AppUser | null>(null) // Local state to hold fresh profile data
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
   const [showReplaceAvatarModal, setShowReplaceAvatarModal] = useState(false)
@@ -42,29 +32,20 @@ export default function SettingsPage() {
   
   // Fetch fresh profile data on mount and when user changes
   useEffect(() => {
-    const refreshProfile = async () => {
-      if (user?.id) {
-        try {
-          const currentUser = await getCurrentUser()
-          if (currentUser) {
-            const profileUser = await mapSupabaseUserWithProfile(currentUser)
-            if (profileUser) {
-              setDisplayUser({
-                ...profileUser,
-                role: profileUser.role || 'user'
-              } as User)
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching fresh profile:', error)
-          setDisplayUser(user)
-        }
-      } else {
-        setDisplayUser(user)
-      }
+    // Use the user from auth context
+    if (user) {
+      setDisplayUser({
+        id: typeof user.id === 'string' ? parseInt(user.id, 10) : user.id,
+        email: user.email,
+        role: user.role,
+        title: user.title || 'attorney',
+        full_name: user.full_name,
+        avatar_url: user.avatar_url,
+        is_active: true
+      })
+    } else {
+      setDisplayUser(null)
     }
-    
-    refreshProfile()
   }, [user])
 
   // Use displayUser for rendering (has fresh profile data) or fall back to user from context
@@ -134,74 +115,10 @@ export default function SettingsPage() {
       }
       reader.readAsDataURL(file)
 
-      // Upload to Supabase storage
-      const fileExt = file.name.split('.').pop()
-      const fileName = `${user.id}-${Date.now()}.${fileExt}`
-      const filePath = fileName
-
-      console.log('📤 Uploading file to storage:', filePath)
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('profile-avatars')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: false
-        })
-
-      if (uploadError) {
-        console.error('❌ Storage upload error:', uploadError)
-        console.error('   Error code:', (uploadError as any).error)
-        console.error('   Error message:', uploadError.message)
-        throw uploadError
-      }
-      
-      console.log('✅ File uploaded successfully:', uploadData)
-
-      // Get public URL
-      const { data } = supabase.storage
-        .from('profile-avatars')
-        .getPublicUrl(filePath)
-
-      const avatarUrl = data.publicUrl
-
-      // Update profile in database
-      console.log('🔄 Updating profile with avatar_url:', avatarUrl)
-      console.log('   User ID:', user.id)
-      const { data: sessionData } = await supabase.auth.getSession()
-      console.log('   Current session:', !!sessionData.session)
-      console.log('   Session user ID:', sessionData.session?.user?.id)
-      
-      const { data: updateData, error: updateError } = await supabase
-        .from('profiles')
-        .update({ avatar_url: avatarUrl })
-        .eq('id', user.id)
-        .select()
-
-      if (updateError) {
-        console.error('❌ Update error:', updateError)
-        console.error('   Error code:', updateError.code)
-        console.error('   Error message:', updateError.message)
-        console.error('   Error details:', updateError.details)
-        console.error('   Error hint:', updateError.hint)
-        throw updateError
-      }
-      
-      console.log('✅ Profile updated successfully:', updateData)
-
-      // Refresh user profile
-      const currentUser = await getCurrentUser()
-      if (currentUser) {
-        const profileUser = await mapSupabaseUserWithProfile(currentUser)
-        if (profileUser) {
-          setDisplayUser({
-            ...profileUser,
-            role: profileUser.role || 'user'
-          } as User)
-          // Update auth context user
-          if (refreshUser) {
-            await refreshUser()
-          }
-        }
-      }
+      // TODO: Implement avatar upload via backend API
+      // For now, we'll skip avatar uploads since there's no backend endpoint yet
+      console.log('📤 Avatar upload not yet implemented - backend API endpoint needed')
+      throw new Error('Avatar upload is not yet available. Please contact support.')
 
       setAvatarPreview(null) // Clear preview after successful upload
     } catch (error: any) {
@@ -240,43 +157,10 @@ export default function SettingsPage() {
     setUploadingAvatar(true)
 
     try {
-      // Extract file path from URL
-      const urlParts = displayUser.avatar_url.split('/')
-      const fileName = urlParts[urlParts.length - 1]
-      const filePath = fileName
-
-      // Delete from storage
-      const { error: deleteError } = await supabase.storage
-        .from('profile-avatars')
-        .remove([filePath])
-
-      if (deleteError) {
-        console.warn('Error deleting file from storage (continuing):', deleteError)
-      }
-
-      // Update profile to remove avatar_url
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ avatar_url: null })
-        .eq('id', user.id)
-
-      if (updateError) throw updateError
-
-      // Refresh user profile
-      const currentUser = await getCurrentUser()
-      if (currentUser) {
-        const profileUser = await mapSupabaseUserWithProfile(currentUser)
-        if (profileUser) {
-          setDisplayUser({
-            ...profileUser,
-            role: profileUser.role || 'user'
-          } as User)
-          // Update auth context user
-          if (refreshUser) {
-            await refreshUser()
-          }
-        }
-      }
+      // TODO: Implement avatar removal via backend API
+      // For now, we'll skip avatar removal since there's no backend endpoint yet
+      console.log('📤 Avatar removal not yet implemented - backend API endpoint needed')
+      throw new Error('Avatar removal is not yet available. Please contact support.')
 
       setAvatarPreview(null)
     } catch (error: any) {
@@ -654,7 +538,7 @@ function UserManagementSection() {
     email: '',
     password: '',
     full_name: '',
-    role: 'user',  // user or admin (permissions)
+    role: 'user',  // admin or user
     title: 'attorney'  // attorney, paralegal, finance, etc. (job title)
   })
   const [editUser, setEditUser] = useState({
@@ -663,8 +547,8 @@ function UserManagementSection() {
     title: 'attorney'
   })
   const [error, setError] = useState('')
-  const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
   const [menuPosition, setMenuPosition] = useState<{ top: number; right: number } | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [userToDelete, setUserToDelete] = useState<AppUser | null>(null)
@@ -705,36 +589,14 @@ function UserManagementSection() {
     setLoading(true)
     setError('')
     try {
-      console.log('🔄 Loading users from Supabase...')
+      console.log('🔄 Loading users from API...')
       
-      // Fetch users directly from Supabase profiles table
-      const { data, error: supabaseError } = await supabase
-        .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: false })
+      // Fetch users from backend API
+      const response = await usersApi.list()
+      const usersData = response.data || []
       
-      if (supabaseError) {
-        console.error('❌ Supabase error loading users:', supabaseError)
-        console.error('   Error code:', supabaseError.code)
-        console.error('   Error message:', supabaseError.message)
-        console.error('   Error details:', supabaseError.details)
-        throw supabaseError
-      }
-      
-      console.log('✅ Loaded users from Supabase:', data?.length || 0)
-      
-      // Map to AppUser format
-      const mappedUsers: AppUser[] = (data || []).map((profile: any) => ({
-        id: profile.id,
-        email: profile.email,
-        full_name: profile.full_name || undefined,
-        role: profile.role || 'user',
-        title: profile.title || 'attorney',
-        avatar_url: profile.avatar_url || undefined,
-        is_active: profile.is_active !== false
-      }))
-      
-      setUsers(mappedUsers)
+      console.log('✅ Loaded users from API:', usersData.length)
+      setUsers(usersData)
     } catch (err: any) {
       console.error('❌ Failed to load users:', err)
       const errorMsg = err.message || err.details || 'Failed to load users'
@@ -755,7 +617,7 @@ function UserManagementSection() {
         password: newUser.password,
         full_name: newUser.full_name || undefined,
         role: newUser.role,
-        title: newUser.title
+        title: newUser.title  // Required field
       })
       
       // Reload users
@@ -764,12 +626,29 @@ function UserManagementSection() {
       setNewUser({ email: '', password: '', full_name: '', role: 'user', title: 'attorney' })
     } catch (err: any) {
       console.error('Failed to create user:', err)
-      const errorMsg = err.response?.data?.detail || err.message || 'Failed to create user'
+      console.error('Error response:', err.response?.data)
+      // Handle validation errors from FastAPI
+      let errorMsg = 'Failed to create user'
+      if (err.response?.data) {
+        if (err.response.data.detail) {
+          // Single error message
+          errorMsg = err.response.data.detail
+        } else if (Array.isArray(err.response.data.detail)) {
+          // Multiple validation errors
+          errorMsg = err.response.data.detail.map((e: any) => 
+            `${e.loc?.join('.')}: ${e.msg}`
+          ).join(', ')
+        } else {
+          errorMsg = JSON.stringify(err.response.data)
+        }
+      } else if (err.message) {
+        errorMsg = err.message
+      }
       setError(errorMsg)
     }
   }
 
-  const handleDeleteUser = (userId: string) => {
+  const handleDeleteUser = (userId: number) => {
     setOpenMenuId(null) // Close menu
     setMenuPosition(null) // Clear menu position
     const user = users.find(u => u.id === userId)
@@ -787,10 +666,7 @@ function UserManagementSection() {
 
     setDeletingId(userToDelete.id)
     try {
-      // Delete user from Supabase (this will cascade delete the profile)
-      // Note: We can't directly delete from auth.users via the client SDK
-      // This should be done via the backend API with admin privileges
-      // For now, we'll use the backend API
+      // Delete user via backend API
       await usersApi.delete(userToDelete.id)
       await loadUsers()
       setShowDeleteModal(false)
@@ -805,7 +681,7 @@ function UserManagementSection() {
     }
   }
 
-  const handleEditUser = (userId: string) => {
+  const handleEditUser = (userId: number) => {
     setOpenMenuId(null) // Close menu
     setMenuPosition(null) // Clear menu position
     const user = users.find(u => u.id === userId)
@@ -828,17 +704,11 @@ function UserManagementSection() {
     setError('')
     
     try {
-      // Update user profile in Supabase
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({
-          full_name: editUser.full_name || null,
-          role: editUser.role,
-          title: editUser.title
-        })
-        .eq('id', editingUser.id)
-      
-      if (updateError) throw updateError
+      await usersApi.update(editingUser.id, {
+        full_name: editUser.full_name || undefined,
+        role: editUser.role,
+        title: editUser.title
+      })
       
       // Reload users
       await loadUsers()
@@ -847,7 +717,7 @@ function UserManagementSection() {
       setEditUser({ full_name: '', role: 'user', title: 'attorney' })
     } catch (err: any) {
       console.error('Failed to update user:', err)
-      const errorMsg = err.message || err.details || 'Failed to update user'
+      const errorMsg = err.response?.data?.detail || err.message || 'Failed to update user'
       setError(errorMsg)
     }
   }
@@ -1038,8 +908,9 @@ function UserManagementSection() {
                   <option value="attorney">Attorney</option>
                   <option value="paralegal">Paralegal</option>
                   <option value="finance">Finance</option>
-                  <option value="admin">Admin</option>
-                  <option value="user">User</option>
+                  <option value="legal_assistant">Legal Assistant</option>
+                  <option value="case_manager">Case Manager</option>
+                  <option value="legal_secretary">Legal Secretary</option>
                 </select>
                 <p className="text-xs text-gray-500 mt-1">Job title/position</p>
               </div>
@@ -1125,8 +996,9 @@ function UserManagementSection() {
                   <option value="attorney">Attorney</option>
                   <option value="paralegal">Paralegal</option>
                   <option value="finance">Finance</option>
-                  <option value="admin">Admin</option>
-                  <option value="user">User</option>
+                  <option value="legal_assistant">Legal Assistant</option>
+                  <option value="case_manager">Case Manager</option>
+                  <option value="legal_secretary">Legal Secretary</option>
                 </select>
                 <p className="text-xs text-gray-500 mt-1">Job title/position</p>
               </div>

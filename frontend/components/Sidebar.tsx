@@ -4,13 +4,17 @@ import { useState, useEffect, memo } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import { useRouter, usePathname } from 'next/navigation'
-import { PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, LayoutDashboard, Briefcase, Sliders, FolderClosed, FolderOpen, Share2, ShieldCheck, Link as LinkIcon, Settings, Blocks } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, LayoutDashboard, Briefcase, Sliders, FolderClosed, FolderOpen, Share2, ShieldCheck, Link as LinkIcon, Settings, Blocks, UserCog } from 'lucide-react'
 import { casesApi, queriesApi, Case, Query } from '@/lib/api'
 import { useDashboard } from '@/lib/dashboard-context'
 
 function Sidebar() {
   const router = useRouter()
   const pathname = usePathname()
+  const { user } = useAuth()
+  
+  // Check if user is super admin (Lawbric employee - internal admin portal access)
+  const isSuperAdmin = user?.role === 'super_admin' || user?.role === 'SUPER_ADMIN'
   const [isCollapsed, setIsCollapsed] = useState(false)
   // Load persisted expanded categories from localStorage
   const loadExpandedCategories = (): Set<string> => {
@@ -327,6 +331,19 @@ function Sidebar() {
             >
               <Blocks className="w-5 h-5" style={{ color: pathname === '/connected-apps' ? '#000000' : '#6b7280' }} />
             </Link>
+            {isSuperAdmin && (
+              <Link
+                href="/admin"
+                className={`flex items-center justify-center px-4 py-3 mb-1 rounded-lg ${
+                  pathname === '/admin' 
+                    ? 'text-[#000000] bg-gray-200' 
+                    : 'text-[#000000] hover:bg-gray-200'
+                }`}
+                title="Admin Portal"
+              >
+                <UserCog className="w-5 h-5" style={{ color: pathname === '/admin' ? '#000000' : '#6b7280' }} />
+              </Link>
+            )}
           </>
         ) : (
           <div className="mb-[10px]">
@@ -365,6 +382,19 @@ function Sidebar() {
                   <Blocks className="w-4 h-4 flex-shrink-0 text-gray-600" />
                   <span>App Directory</span>
                 </Link>
+                {isSuperAdmin && (
+                  <Link
+                    href="/admin"
+                    className={`flex items-center gap-3 px-3 py-1 mb-0.5 text-[12px] border-l-4 w-full ${
+                      pathname === '/admin'
+                        ? 'bg-gray-200 text-[#000000] border-l-4 border-[#000000]' 
+                        : 'text-[#000000] hover:bg-gray-200 border-transparent'
+                    }`}
+                  >
+                    <UserCog className="w-4 h-4 flex-shrink-0 text-gray-600" />
+                    <span>Admin Portal</span>
+                  </Link>
+                )}
               </div>
             )}
           </div>

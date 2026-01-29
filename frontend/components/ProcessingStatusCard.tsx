@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import { Document, documentsApi } from '@/lib/api'
 import { X, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 
 interface ProcessingDocument {
   id: string | number
@@ -57,15 +56,11 @@ export default function ProcessingStatusCard({
             const docId = item.document.id
             let updatedDoc: Document | null = null
 
-            if (typeof docId === 'string' && docId.includes('-')) {
-              // UUID - fetch from Supabase
-              const { data, error } = await supabase
-                .from('documents')
-                .select('*')
-                .eq('id', docId)
-                .single()
-
-              if (!error && data) {
+            // Fetch document via API (supports both UUID and numeric IDs)
+            try {
+              const response = await documentsApi.get(docId)
+              if (response.data) {
+                const data = response.data
                 updatedDoc = {
                   id: data.id,
                   case_id: data.case_id,
@@ -74,7 +69,7 @@ export default function ProcessingStatusCard({
                   file_type: data.file_type || 'pdf',
                   file_size: data.file_size || 0,
                   status: data.status || 'pending',
-                  uploaded_at: data.uploaded_at || data.created_at,
+                  uploaded_at: data.uploaded_at || data.created_at || new Date().toISOString(),
                   page_count: data.page_count || 0,
                   word_count: data.word_count || 0,
                   bates_number: data.bates_number || undefined,
@@ -84,14 +79,8 @@ export default function ProcessingStatusCard({
                   metadata: data.metadata || {}
                 }
               }
-            } else {
-              // Integer ID - fetch from backend API
-              try {
-                const response = await documentsApi.get(Number(docId))
-                updatedDoc = response.data
-              } catch (error) {
-                console.error('Failed to fetch document status:', error)
-              }
+            } catch (error) {
+              console.error('Failed to fetch document status:', error)
             }
 
             if (updatedDoc && updatedDoc.status !== currentStatus) {

@@ -116,21 +116,30 @@ class VectorStore:
         ids = [f"chunk_{meta.get('chunk_id', i)}" for i, meta in enumerate(metadata)]
         texts = [doc.get("content", "") for doc in documents]
         
+        # Filter out None values from metadata as ChromaDB doesn't accept them
+        cleaned_metadata = []
+        for meta in metadata:
+            cleaned_meta = {k: v for k, v in meta.items() if v is not None}
+            cleaned_metadata.append(cleaned_meta)
+        
         self.collection.add(
             ids=ids,
             embeddings=embeddings,
             documents=texts,
-            metadatas=metadata
+            metadatas=cleaned_metadata
         )
     
     def _add_pinecone(self, documents: List[Dict], embeddings: List[List[float]], metadata: List[Dict]):
         """Add to Pinecone"""
         vectors = []
         for i, (doc, emb, meta) in enumerate(zip(documents, embeddings, metadata)):
+            # Filter out None values from metadata as Pinecone doesn't accept them
+            cleaned_meta = {k: v for k, v in meta.items() if v is not None}
+            cleaned_meta["text"] = doc.get("content", "")
             vectors.append({
                 "id": f"chunk_{meta.get('chunk_id', i)}",
                 "values": emb,
-                "metadata": {**meta, "text": doc.get("content", "")}
+                "metadata": cleaned_meta
             })
         
         self._client.upsert(vectors=vectors)

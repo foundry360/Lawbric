@@ -10,7 +10,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.auth.transport.requests import Request
 from app.core.config import settings
-from app.core.supabase_db import get_oauth_connection, update_oauth_connection
+from sqlalchemy.orm import Session
+from typing import Callable
 import io
 import json
 
@@ -20,14 +21,25 @@ class GoogleDriveService:
     
     SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
     
-    def __init__(self, user_id: str):
+    def __init__(self, user_id: int, db: Optional[Session] = None, get_connection_fn: Optional[Callable] = None, update_connection_fn: Optional[Callable] = None):
         self.user_id = user_id
+        self.db = db
+        self.get_connection_fn = get_connection_fn
+        self.update_connection_fn = update_connection_fn
         self.credentials: Optional[Credentials] = None
         self.service: Optional[Any] = None
     
     def _get_connection(self) -> Optional[Dict[str, Any]]:
         """Get OAuth connection from database"""
-        return get_oauth_connection(self.user_id, 'google_drive')
+        if self.get_connection_fn:
+            connection = self.get_connection_fn(self.user_id, 'google_drive', self.db)
+            if connection:
+                return {
+                    'access_token': connection.access_token,
+                    'refresh_token': connection.refresh_token,
+                    'token_expires_at': connection.token_expires_at.isoformat() if connection.token_expires_at else None
+                }
+        return None
     
     def _load_credentials(self) -> bool:
         """Load and refresh credentials from database"""
@@ -66,14 +78,23 @@ class GoogleDriveService:
                     print(f"Could not get expiry from credentials: {e}")
                     expires_at = None
                 
-                update_oauth_connection(
-                    self.user_id,
-                    'google_drive',
-                    {
-                        'access_token': self.credentials.token,
-                        'token_expires_at': expires_at
-                    }
-                )
+                if self.update_connection_fn:
+                    from datetime import datetime
+                    expires_at_dt = None
+                    if expires_at:
+                        try:
+                            expires_at_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                        except:
+                            pass
+                    self.update_connection_fn(
+                        self.user_id,
+                        'google_drive',
+                        {
+                            'access_token': self.credentials.token,
+                            'token_expires_at': expires_at_dt
+                        },
+                        self.db
+                    )
             except Exception as e:
                 import traceback
                 print(f"Error refreshing Google Drive token: {e}")

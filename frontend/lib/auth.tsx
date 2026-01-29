@@ -1,19 +1,24 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react'
-import { supabase } from './supabase'
-import { signIn, signUp, getSession, getCurrentUser, onAuthStateChange, mapSupabaseUser, mapSupabaseUserWithProfile } from './supabase-auth'
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import axios from 'axios'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001'
+
+// Log API URL in development to help debug connection issues
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  console.log('API URL configured as:', API_URL)
+}
 
 interface User {
-  id: string | number
+  id: number
   email: string
-  role: string  // user or admin (permissions)
-  title?: string  // attorney, paralegal, finance, etc. (job title)
+  role: string  // admin, attorney, paralegal
+  title: string  // attorney, paralegal, finance, etc. (job title - required)
   full_name?: string
-  avatar_url?: string  // URL to profile avatar in Supabase storage
+  avatar_url?: string  // URL to profile avatar
+  tenant_id?: number
+  tenant_name?: string
 }
 
 interface AuthContextType {
@@ -31,444 +36,173 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const hasInitializedRef = useRef(false)
 
   useEffect(() => {
-    // If already initialized, ensure loading state is correct
-    if (hasInitializedRef.current) {
-      // If we have user or token, loading should be false
-      if ((user || token) && loading) {
-        setLoading(false)
-        return
-      }
-      
-      // If still loading but no user/token, check localStorage and set loading to false
-      // This prevents infinite loading if initialization didn't complete
-      if (loading && !user && !token) {
-        if (typeof window !== 'undefined') {
-          const storedToken = localStorage.getItem('token')
-          const devBypass = localStorage.getItem('devBypass') === 'true'
-          
-          if (storedToken || devBypass) {
-            // We have a token or dev bypass, so we're authenticated
-            // Set loading to false - user data will load in background if needed
-            setLoading(false)
-          } else {
-            // No token and no dev bypass - set loading to false anyway after short delay
-            // This prevents infinite loading screen
-            const timeout = setTimeout(() => {
-              setLoading(false)
-            }, 500)
-            return () => clearTimeout(timeout)
-          }
-        } else {
-          // Server-side, just set loading to false
+    // Check for stored token on mount
+    if (typeof window !== 'undefined') {
+      const storedToken = localStorage.getItem('token')
+      if (storedToken) {
+        setToken(storedToken)
+        // Add safety timeout to ensure loading is always set to false
+        const safetyTimeout = setTimeout(() => {
+          console.warn('Auth check safety timeout reached, forcing loading to false')
           setLoading(false)
-        }
-      }
-      return
-    }
-    
-    let mounted = true
-    let safetyTimeout: NodeJS.Timeout | null = null
-    let supabaseUserLoaded = false // Track if Supabase successfully loaded user
-
-    const initializeAuth = async () => {
-      hasInitializedRef.current = true
-      
-      // Quick check: if we already have user/token in state, skip loading
-      if (user || token) {
-        setLoading(false)
-        return
-      }
-      
-      // Quick check: if no token in localStorage, show login immediately
-      let storedToken: string | null = null
-      if (typeof window !== 'undefined') {
-        storedToken = localStorage.getItem('token')
-        if (!storedToken) {
-          // No token - show login page immediately and skip all auth checks
-          if (mounted) {
-            setLoading(false)
-          }
-          if (safetyTimeout) clearTimeout(safetyTimeout)
-          return
-        }
-      }
-      
-      // Safety timeout to ensure loading is always set to false
-      // This prevents infinite loading if something goes wrong
-      safetyTimeout = setTimeout(() => {
-        if (mounted) {
-          console.warn('Auth loading timeout - forcing loading to false')
-          setLoading(false)
-        }
-      }, 3000) // Reduced to 3 seconds - faster timeout
-
-      try {
-        // Wait for client-side only
-        if (typeof window === 'undefined') {
-          setLoading(false)
-          if (safetyTimeout) clearTimeout(safetyTimeout)
-          return
-        }
-
-        // Try Supabase first (only if we have a token or want to check for session)
-        try {
-          // Supabase might need a moment to restore session from localStorage
-          // Wait a bit before checking session
-          await new Promise(resolve => setTimeout(resolve, 100))
-          
-          // Add timeout for getSession to prevent hanging
-          const sessionPromise = getSession()
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Session timeout')), 8000) // Increased timeout to 8s
-          )
-          const session = await Promise.race([sessionPromise, timeoutPromise]) as any
-          if (session?.user && session?.access_token) {
-            // Fetch user with profile to get accurate role from profiles table
-            const appUser = await mapSupabaseUserWithProfile(session.user)
-            if (appUser) {
-              // Mark that Supabase successfully loaded a user
-              supabaseUserLoaded = true
-              
-              // Always set user if we have appUser, even if mounted is false
-              // The component might have unmounted during async operations, but we still want to restore the session
-              const avatarUrl = appUser.avatar_url && appUser.avatar_url !== 'null' && appUser.avatar_url.trim() !== '' 
-                ? appUser.avatar_url 
-                : undefined
-              setUser({
-                id: appUser.id,
-                email: appUser.email,
-                role: appUser.role || 'user',
-                title: appUser.title,
-                full_name: appUser.full_name,
-                avatar_url: avatarUrl
-              })
-              // Store Supabase access token (not user ID)
-              setToken(session.access_token)
-              if (typeof window !== 'undefined') {
-                localStorage.setItem('token', session.access_token)
-              }
-              if (safetyTimeout) clearTimeout(safetyTimeout)
-              setLoading(false)
-              return
-            }
-          } else {
-            // No active session, but check if we have a stored token
-            // This handles the case where session expired but we still have a token
-            const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null
-            if (storedToken && !storedToken.startsWith('dev-token-')) {
-              // We have a stored Supabase token, but getSession() returned null
-              // This might mean the session expired. Try to get user directly which might trigger a refresh
-              console.log('No active Supabase session, but found stored token, trying to get user...')
-              try {
-                // Try to get the user directly - this might refresh the session automatically
-                const currentUser = await getCurrentUser()
-                if (currentUser) {
-                  // Got user, now get session again
-                  const newSession = await getSession()
-                  if (newSession?.access_token) {
-                    const appUser = await mapSupabaseUserWithProfile(currentUser)
-                    if (appUser && mounted) {
-                      console.log('✅ Restored session and loaded user:', appUser.role)
-                      setUser({
-                        id: appUser.id,
-                        email: appUser.email,
-                        role: appUser.role || 'user',
-                        title: appUser.title,
-                        full_name: appUser.full_name,
-                        avatar_url: appUser.avatar_url
-                      })
-                      setToken(newSession.access_token)
-                      if (typeof window !== 'undefined') {
-                        localStorage.setItem('token', newSession.access_token)
-                      }
-                      if (safetyTimeout) clearTimeout(safetyTimeout)
-                      setLoading(false)
-                      return
-                    }
-                  }
-                }
-              } catch (getUserError) {
-                console.log('Could not get user, will check legacy auth:', getUserError)
-              }
-              // If that failed, continue to legacy auth check below
-            }
-          }
-        } catch (supabaseError) {
-          // Supabase not available or not configured, fall through to legacy auth
-          console.log('Supabase auth not available, trying legacy auth:', supabaseError)
-          // Make sure we continue to legacy auth even if Supabase fails
-        }
-
-        // Check for stored token (legacy auth) - but only if Supabase didn't already load a user
-        // If Supabase already loaded a user, don't check legacy auth
-        if (supabaseUserLoaded) {
-          if (safetyTimeout) clearTimeout(safetyTimeout)
-          return
-        }
+        }, 10000) // 10 second maximum timeout
         
-        const storedToken = localStorage.getItem('token')
-        
-        if (storedToken && storedToken.startsWith('dev-token-')) {
-          // Dev token - set user immediately
-          const mockUser = {
-            id: 1,
-            email: 'dev@lawfirm.com',
-            role: 'attorney',
-            full_name: 'Development User'
-          }
-          if (mounted) {
-            setUser(mockUser)
-            setToken(storedToken)
-            setLoading(false)
-            if (safetyTimeout) clearTimeout(safetyTimeout)
-          }
-          return
-        }
-
-        if (storedToken) {
-          // Real token - try to fetch user from backend
-          setToken(storedToken)
-          try {
-            const response = await axios.get(`${API_URL}/api/v1/auth/me`, {
-              headers: { Authorization: `Bearer ${storedToken}` },
-              timeout: 3000
-            })
-            if (mounted) {
-              setUser(response.data)
-              setLoading(false)
-              if (safetyTimeout) clearTimeout(safetyTimeout)
-            }
-          } catch (error) {
-            // Backend unavailable - don't create dev user automatically
-            // If the token is a Supabase token, we should have gotten user from Supabase already
-            // If we're here, it means we have a token but can't validate it - likely an expired token
-            console.warn('Backend unavailable or token invalid:', error)
-            // Don't set user - let the dashboard layout redirect to login
-            if (mounted) {
-              setLoading(false)
-              if (safetyTimeout) clearTimeout(safetyTimeout)
-            }
-          }
-        } else {
-          // No token - already set loading to false above, just clean up
-          if (safetyTimeout) clearTimeout(safetyTimeout)
-          // Don't set user - this will allow the dashboard layout to redirect to login
-        }
-      } catch (error) {
-        // Any error - don't create dev user, just set loading to false
-        // This allows the dashboard layout to handle redirect to login
-        console.warn('Auth initialization error:', error)
-        if (mounted) {
-          setLoading(false)
-          if (safetyTimeout) clearTimeout(safetyTimeout)
-        }
-      }
-    }
-
-    initializeAuth()
-
-    // Listen for Supabase auth changes
-    const { data: { subscription } } = onAuthStateChange((event, session) => {
-      if (!mounted) return
-
-      if (event === 'SIGNED_IN' && session?.user) {
-        // Fetch user with profile to get accurate role from profiles table
-        mapSupabaseUserWithProfile(session.user).then((appUser) => {
-          if (appUser && session.access_token && mounted) {
-            setUser({
-              id: appUser.id,
-              email: appUser.email,
-              role: appUser.role || 'user',
-              title: appUser.title,
-              full_name: appUser.full_name,
-              avatar_url: appUser.avatar_url || undefined
-            })
-            // Store Supabase access token (not user ID)
-            setToken(session.access_token)
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('token', session.access_token)
-            }
-            setLoading(false)
-          }
-        }).catch((error) => {
-          console.error('Error fetching user profile in auth state change:', error)
-          // Fall back to basic user if profile fetch fails
-          const basicUser = mapSupabaseUser(session.user)
-          if (basicUser && session.access_token && mounted) {
-            setUser({
-              id: basicUser.id,
-              email: basicUser.email,
-              role: basicUser.role || 'user',
-              title: basicUser.title,
-              full_name: basicUser.full_name,
-              avatar_url: basicUser.avatar_url
-            })
-            setToken(session.access_token)
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('token', session.access_token)
-            }
-            setLoading(false)
-          }
+        loadUser(storedToken).finally(() => {
+          clearTimeout(safetyTimeout)
         })
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null)
-        setToken(null)
-        localStorage.removeItem('token')
-        localStorage.removeItem('devBypass')
+      } else {
+        setLoading(false)
       }
-    })
-
-    return () => {
-      mounted = false
-      if (safetyTimeout) clearTimeout(safetyTimeout)
-      subscription.unsubscribe()
+    } else {
+      setLoading(false)
     }
-  }, []) // Empty dependency array - only run once on mount
+  }, [])
 
-  const login = async (email: string, password: string) => {
-    // Check if Supabase is properly configured
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-    
-    if (!supabaseUrl || !supabaseKey || supabaseUrl === 'https://placeholder.supabase.co') {
-      console.error('❌ Supabase not configured. Please check your .env.local file.')
-      throw new Error('Supabase is not configured. Please check environment variables.')
-    }
-
+  const loadUser = async (authToken: string) => {
     try {
-      // Try Supabase authentication first
-      console.log('🔐 Attempting Supabase sign in...')
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
-
-      if (signInError) {
-        console.log('⚠️ Sign in error:', signInError.message)
-        
-        // If sign in fails - don't auto-create accounts
-        // Users must be created by admin in settings
-        throw new Error('Invalid email or password. Please contact your administrator for access.')
-      }
-
-      if (signInData.user && signInData.session) {
-        console.log('✅ Sign in successful! User:', signInData.user.id)
-        // Sign in successful - fetch profile to get accurate role from profiles table
-        const appUser = await mapSupabaseUserWithProfile(signInData.user)
-        if (appUser) {
-          // Ensure avatar_url is properly set
-          const avatarUrl = appUser.avatar_url && appUser.avatar_url !== 'null' && appUser.avatar_url.trim() !== '' 
-            ? appUser.avatar_url 
-            : undefined
-          
-          const userData = {
-            id: appUser.id,
-            email: appUser.email,
-            role: appUser.role || 'user',
-            title: appUser.title,
-            full_name: appUser.full_name,
-            avatar_url: avatarUrl
-          }
-          
-          // Set user state
-          setUser(userData)
-          
-          // Store Supabase access token (not user ID)
-          const accessToken = signInData.session.access_token
-          setToken(accessToken)
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('token', accessToken)
-            localStorage.removeItem('devBypass')
-          }
-          setLoading(false)
-          
-          // Small delay to ensure state is set before navigation
-          await new Promise(resolve => setTimeout(resolve, 100))
-          return
-        }
-      }
-
-      throw new Error('Unexpected error during authentication')
-    } catch (error: any) {
-      // If it's already a user-friendly error, re-throw it
-      if (error.message && !error.message.includes('Failed to fetch') && !error.message.includes('Network')) {
-        console.error('❌ Auth error:', error.message)
-        throw error
-      }
-
-      // Network/connection error - try legacy backend
-      console.log('⚠️ Supabase auth failed, trying legacy backend:', error.message)
+      console.log('Attempting to load user from:', `${API_URL}/api/v1/auth/me`)
+      // Use a more aggressive timeout and better error handling
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 8000)
       
       try {
-        const response = await axios.post(`${API_URL}/api/v1/auth/login`, {
-          email,
-          password
-        }, {
-          timeout: 3000
+        const response = await axios.get(`${API_URL}/api/v1/auth/me`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+          timeout: 8000,
+          signal: controller.signal
         })
-        
-        const { access_token, user: userData } = response.data
-        setToken(access_token)
-        setUser(userData)
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('token', access_token)
-          localStorage.setItem('devBypass', 'false')
+        clearTimeout(timeoutId)
+        setUser(response.data)
+        console.log('User loaded successfully')
+      } catch (requestError: any) {
+        clearTimeout(timeoutId)
+        if (requestError.code === 'ERR_NETWORK' || requestError.message === 'Network Error') {
+          console.error('Network error connecting to backend at:', API_URL)
+          console.error('Please ensure the backend is running and accessible')
         }
-      } catch (legacyError: any) {
-        // If all auth methods fail, throw the original error
-        console.error('❌ All auth methods failed')
-        throw new Error(error.message || 'Authentication failed. Please check your credentials and try again.')
+        throw requestError
       }
+    } catch (error: any) {
+      console.error('Failed to load user:', error)
+      // Token might be invalid - clear it
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('token')
+      }
+      setToken(null)
+      setUser(null)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const logout = async () => {
-    try {
-      // Sign out from Supabase
-      await supabase.auth.signOut()
-    } catch (error) {
-      console.warn('Supabase sign out failed:', error)
+  // Check if backend is ready before making requests
+  const checkBackendHealth = async (maxRetries = 6, delay = 1200): Promise<boolean> => {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 8000)
+        
+        const response = await fetch(`${API_URL}/health`, {
+          method: 'GET',
+          signal: controller.signal,
+        })
+        
+        clearTimeout(timeoutId)
+        
+        if (response.ok) {
+          const data = await response.json()
+          // Check if database is connected (if health check includes this)
+          if (data.status === 'healthy' || data.status === 'degraded') {
+            return true
+          }
+        }
+      } catch (error) {
+        // Continue to next retry
+        console.log(`Health check attempt ${i + 1}/${maxRetries} failed, retrying...`)
+      }
+      
+      if (i < maxRetries - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        delay *= 1.5 // Exponential backoff
+      }
     }
-    
+    return false
+  }
+
+  const login = async (email: string, password: string) => {
+    try {
+      // Check backend health before attempting login
+      const isReady = await checkBackendHealth()
+
+      const attemptLogin = async (attempt: number): Promise<any> => {
+        try {
+          return await axios.post(
+            `${API_URL}/api/v1/auth/login`,
+            { email, password },
+            { timeout: 30000 }
+          )
+        } catch (err: any) {
+          const isNetwork =
+            err?.code === 'ERR_NETWORK' ||
+            err?.code === 'ECONNABORTED' ||
+            err?.message === 'Network Error' ||
+            err?.message?.includes('ERR_EMPTY_RESPONSE')
+
+          if (isNetwork && attempt < 3) {
+            const delay = Math.pow(2, attempt - 1) * 1000
+            await new Promise((resolve) => setTimeout(resolve, delay))
+            return attemptLogin(attempt + 1)
+          }
+          throw err
+        }
+      }
+
+      if (!isReady) {
+        // Backend may still accept login even if health check fails; try anyway.
+        console.warn('Health check failed, attempting login anyway...')
+      }
+
+      const response = await attemptLogin(1)
+      
+      const { access_token } = response.data
+      setToken(access_token)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('token', access_token)
+      }
+      
+      // Load user info
+      await loadUser(access_token)
+    } catch (error: any) {
+      console.error('Login error:', error)
+      let errorMessage = 'Invalid email or password'
+      
+      if (error.message?.includes('Backend is not ready')) {
+        errorMessage = error.message
+      } else if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+        errorMessage = 'Unable to connect to server. Please ensure the backend is running and try again.'
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+      
+      throw new Error(errorMessage)
+    }
+  }
+
+  const logout = () => {
     setToken(null)
     setUser(null)
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('token')
-        localStorage.removeItem('devBypass')
-      }
-    } catch (e) {
-      // localStorage might not be available
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token')
     }
   }
 
   const refreshUser = async () => {
-    try {
-      // Get current session
-      const session = await getSession()
-      if (session?.user) {
-        // Fetch user with profile to get updated data including avatar
-        const appUser = await mapSupabaseUserWithProfile(session.user)
-        if (appUser) {
-          console.log('Refreshing user - avatar_url:', appUser.avatar_url)
-          setUser({
-            id: appUser.id,
-            email: appUser.email,
-            role: appUser.role || 'user',
-            title: appUser.title,
-            full_name: appUser.full_name,
-            avatar_url: appUser.avatar_url || undefined // Explicitly handle null
-          })
-          if (session.access_token) {
-            setToken(session.access_token)
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error refreshing user:', error)
+    if (token) {
+      await loadUser(token)
     }
   }
 
@@ -486,4 +220,5 @@ export function useAuth() {
   }
   return context
 }
+
 

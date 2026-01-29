@@ -14,7 +14,7 @@ if (Test-Path .next) {
 if (Test-Path .env.local) {
     Write-Host "✅ .env.local found" -ForegroundColor Green
     Write-Host "Contents:" -ForegroundColor Cyan
-    Get-Content .env.local | Select-String "SUPABASE"
+    Get-Content .env.local
 } else {
     Write-Host "❌ .env.local NOT FOUND!" -ForegroundColor Red
     exit 1
@@ -22,6 +22,9 @@ if (Test-Path .env.local) {
 
 Write-Host "`n✅ Ready to restart dev server" -ForegroundColor Green
 Write-Host "Run: npm run dev" -ForegroundColor Cyan
+
+
+
 
 
 

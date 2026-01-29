@@ -110,8 +110,8 @@ export default function GoogleDrivePicker({ onFileSelect, selectedFileIds, onIns
 
   const isFolder = (mimeType: string) => mimeType === 'application/vnd.google-apps.folder'
   const isSelectable = (mimeType: string) => {
-    // Only allow files, not folders
-    return !isFolder(mimeType)
+    // Only allow PDFs for MVP
+    return mimeType === 'application/pdf'
   }
 
   const formatFileSize = (size?: string) => {
@@ -396,14 +396,14 @@ export default function GoogleDrivePicker({ onFileSelect, selectedFileIds, onIns
             )}
 
             {/* Documents Section - Below folders, 6 across with icons */}
-            {files.some(f => !isFolder(f.mimeType)) && (
+            {files.some(f => !isFolder(f.mimeType) && f.mimeType === 'application/pdf') && (
               <div>
                 {files.some(f => isFolder(f.mimeType)) && (
-                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Documents</h3>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">PDF Documents</h3>
                 )}
                 <div className="grid grid-cols-6 gap-4">
                   {files
-                    .filter(file => !isFolder(file.mimeType))
+                    .filter(file => !isFolder(file.mimeType) && file.mimeType === 'application/pdf')
                     .map((file) => {
                       const isSelected = selectedFileIds.includes(file.id)
                       const canSelect = isSelectable(file.mimeType)
@@ -470,14 +470,16 @@ export default function GoogleDrivePicker({ onFileSelect, selectedFileIds, onIns
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
-            {[...files].sort((a, b) => {
-              // Folders first, then documents
-              const aIsFolder = isFolder(a.mimeType)
-              const bIsFolder = isFolder(b.mimeType)
-              if (aIsFolder && !bIsFolder) return -1
-              if (!aIsFolder && bIsFolder) return 1
-              return 0
-            }).map((file) => {
+            {[...files]
+              .filter(file => isFolder(file.mimeType) || file.mimeType === 'application/pdf')
+              .sort((a, b) => {
+                // Folders first, then documents
+                const aIsFolder = isFolder(a.mimeType)
+                const bIsFolder = isFolder(b.mimeType)
+                if (aIsFolder && !bIsFolder) return -1
+                if (!aIsFolder && bIsFolder) return 1
+                return 0
+              }).map((file) => {
               const isSelected = selectedFileIds.includes(file.id)
               const canSelect = isSelectable(file.mimeType)
               

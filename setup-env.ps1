@@ -1,13 +1,9 @@
 # PowerShell script to set up environment variables
-# Run this script to create .env files with your Supabase credentials
+# Run this script to create .env files
 
 $frontendEnv = @"
 # API Configuration
-NEXT_PUBLIC_API_URL=http://localhost:8000
-
-# Supabase Configuration
-NEXT_PUBLIC_SUPABASE_URL=https://erzumnwlvokamhuwcfyf.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVyenVtbndsdm9rYW1odXdjZnlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3NzA5ODAsImV4cCI6MjA4NDM0Njk4MH0.nxgtb_xsbwamZ2OIGvHA6xyXoKnsnAIDi6mGAVNi8jA
+NEXT_PUBLIC_API_URL=http://localhost:9001
 "@
 
 $backendEnv = @"
@@ -16,12 +12,7 @@ ENVIRONMENT=development
 SECRET_KEY=change-me-in-production
 
 # Database
-DATABASE_URL=sqlite:///./legalai.db
-
-# Supabase Configuration
-SUPABASE_URL=https://erzumnwlvokamhuwcfyf.supabase.co
-SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVyenVtbndsdm9rYW1odXdjZnlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3NzA5ODAsImV4cCI6MjA4NDM0Njk4MH0.nxgtb_xsbwamZ2OIGvHA6xyXoKnsnAIDi6mGAVNi8jA
-SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVyenVtbndsdm9rYW1odXdjZnlmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODc3MDk4MCwiZXhwIjoyMDg0MzQ2OTgwfQ.u7ktKuVZ3Q3mGWzxUPZ1ehRSnIsJobDV9ZvF4OSG65A
+DATABASE_URL=postgresql://legalai:legalai123@localhost:5432/legalai
 
 # LLM Provider
 LLM_PROVIDER=openai

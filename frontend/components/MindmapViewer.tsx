@@ -26,7 +26,7 @@ export default function MindmapViewer({
   // Track which document types are expanded (all collapsed by default)
   const [expandedDocumentTypes, setExpandedDocumentTypes] = useState<Set<string>>(new Set())
   // Track which documents have their queries expanded (all collapsed by default)
-  const [expandedDocuments, setExpandedDocuments] = useState<Set<number>>(new Set())
+  const [expandedDocuments, setExpandedDocuments] = useState<Set<string>>(new Set())
 
   const toggleDocumentTypes = () => {
     setDocumentTypesVisible(prev => !prev)
@@ -44,13 +44,14 @@ export default function MindmapViewer({
     })
   }
 
-  const toggleDocumentQueries = (docId: number) => {
+  const toggleDocumentQueries = (docId: string | number) => {
+    const docKey = String(docId)
     setExpandedDocuments(prev => {
       const newSet = new Set(prev)
-      if (newSet.has(docId)) {
-        newSet.delete(docId)
+      if (newSet.has(docKey)) {
+        newSet.delete(docKey)
       } else {
-        newSet.add(docId)
+        newSet.add(docKey)
       }
       return newSet
     })
@@ -287,7 +288,7 @@ export default function MindmapViewer({
           
           typeDocuments.forEach((doc, docIndex) => {
             const nodeId = `doc-${doc.id}`
-            const isDocExpanded = expandedDocuments.has(doc.id)
+            const isDocExpanded = expandedDocuments.has(String(doc.id))
             const textLength = doc.original_filename.length
             const estimatedWidth = Math.min(Math.max(textLength * 4, 100), 200)
             // Get queries that cite this document

@@ -23,11 +23,6 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./legalai.db"
     
-    # Supabase
-    SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
-    SUPABASE_SERVICE_KEY: str = ""  # Service role key for backend operations
-    
     # Vector Database
     VECTOR_DB_TYPE: str = "chroma"  # Options: pinecone, weaviate, chroma
     PINECONE_API_KEY: str = ""
@@ -61,6 +56,12 @@ class Settings(BaseSettings):
     # Security
     ENCRYPT_FILES: bool = True
     CASE_ISOLATION_ENABLED: bool = True
+    
+    # Risk Engine Configuration
+    RISK_ENABLED: bool = True
+    RISK_PROFILE_A_MAX: int = 30  # 0-30: Low risk
+    RISK_PROFILE_B_MAX: int = 70  # 31-70: Medium risk
+    RISK_PROFILE_C_MAX: int = 100  # 71-100: High risk
     
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""

@@ -16,7 +16,7 @@ docker-compose -f docker-compose.dev.yml up -d
 
 **That's it!** Both servers will start automatically.
 
-- Backend: http://localhost:9000
+- Backend: http://localhost:9001
 - Frontend: http://localhost:3000
 
 ## Stop Services
@@ -66,17 +66,13 @@ docker ps
 Create `.env` file in project root:
 ```env
 # Frontend
-NEXT_PUBLIC_SUPABASE_URL=your_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_key
 
 # Backend
 OPENAI_API_KEY=your_key
 ANTHROPIC_API_KEY=your_key  # Optional: use if LLM_PROVIDER=anthropic
-SUPABASE_URL=your_url
-SUPABASE_KEY=your_key
-SUPABASE_SERVICE_KEY=your_service_key
 ```
 
 Docker Compose will automatically load these from the `.env` file in the project root.
+
 
 

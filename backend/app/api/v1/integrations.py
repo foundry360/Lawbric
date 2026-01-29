@@ -14,9 +14,14 @@ import traceback
 import os
 from datetime import datetime
 
-from app.core.supabase import get_supabase_client
 from app.core.config import settings
-from app.core.supabase_db import get_oauth_connection, create_oauth_connection, delete_oauth_connection
+from app.core.database import get_db, SessionLocal
+from app.core.auth import get_current_user_and_tenant
+from sqlalchemy.orm import Session
+from app.models.user import User
+from app.models.oauth_connection import OAuthConnection
+from typing import Tuple
+from uuid import uuid4
 from app.services.google_drive_service import GoogleDriveService
 from app.services.document_processor import DocumentProcessor
 from app.services.embedding_service import EmbeddingService
@@ -32,261 +37,115 @@ embedding_service = EmbeddingService()
 vector_store = VectorStore()
 
 
-def process_supabase_document_background(document_id: str, file_path: str, file_ext: str, case_id: str):
-    """
-    Background task to process a Supabase document asynchronously
-    Works with UUID document IDs and Supabase database
-    """
-    thread_name = threading.current_thread().name
-    logger.info(f"=== SUPABASE BACKGROUND TASK STARTED for document {document_id} in thread {thread_name} ===")
-    logger.info(f"Parameters: file_path={file_path}, file_ext={file_ext}, case_id={case_id}")
-    
-    supabase = get_supabase_client()
-    if not supabase:
-        logger.error("Supabase client not available for background processing")
-        return
-    
-    try:
-        # Verify file exists
-        if not os.path.exists(file_path):
-            logger.error(f"Document file not found: {file_path}")
-            supabase.table('documents').update({
-                'status': 'error',
-                'error_message': f'File not found: {file_path}'
-            }).eq('id', document_id).execute()
-            return
-        
-        # Step 0: Generate thumbnail
-        logger.info(f"Generating thumbnail for document {document_id}")
-        thumbnail_path = None
-        try:
-            os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
-            thumbnail_filename = f"thumb_{document_id}.jpg"
-            thumbnail_output_path = os.path.join(settings.THUMBNAIL_DIR, thumbnail_filename)
-            thumbnail_output_path = os.path.abspath(thumbnail_output_path)
-            
-            if processor.generate_thumbnail(file_path, file_ext, thumbnail_output_path):
-                if os.path.exists(thumbnail_output_path):
-                    thumbnail_path = thumbnail_output_path
-                    supabase.table('documents').update({
-                        'thumbnail_path': thumbnail_path
-                    }).eq('id', document_id).execute()
-                    logger.info(f"Thumbnail generated for document {document_id}")
-        except Exception as e:
-            logger.warning(f"Failed to generate thumbnail: {e}", exc_info=True)
-        
-        # Step 1: Extract text
-        logger.info(f"Extracting text from document {document_id}")
-        processed = processor.process_document(file_path, file_ext)
-        logger.info(f"Processor returned: page_count={processed.get('page_count')}, requires_ocr={processed.get('requires_ocr')}")
-        
-        # Update document with extraction results
-        extracted_text = processed["text"]
-        page_count = processed["page_count"]
-        word_count = len(extracted_text.split())
-        requires_ocr = processed["requires_ocr"]
-        ocr_completed = not requires_ocr or all(
-            page.get("method") == "ocr" for page in processed.get("pages", [])
-        )
-        
-        supabase.table('documents').update({
-            'extracted_text': extracted_text,
-            'page_count': page_count,
-            'word_count': word_count,
-            'requires_ocr': requires_ocr,
-            'ocr_completed': ocr_completed
-        }).eq('id', document_id).execute()
-        
-        logger.info(f"Text extraction completed: {page_count} pages, {word_count} words")
-        
-        # Step 2: Chunk text
-        logger.info(f"Chunking text for document {document_id}")
-        page_mapping = []
-        if processed.get("pages"):
-            current_char = 0
-            for page_info in processed["pages"]:
-                page_num = page_info.get("page_number", 1)
-                page_text = page_info.get("text", "")
-                page_start = current_char
-                page_end = current_char + len(page_text)
-                page_mapping.append({
-                    "page": page_num,
-                    "start": page_start,
-                    "end": page_end
-                })
-                current_char = page_end + 2
-        
-        chunks = processor.chunk_text(
-            extracted_text,
-            page_mapping=page_mapping if page_mapping else None
-        )
-        logger.info(f"Created {len(chunks)} chunks")
-        
-        # Step 3: Generate embeddings
-        logger.info(f"Generating embeddings for document {document_id}")
-        chunk_texts = [chunk["content"] for chunk in chunks]
-        embeddings = embedding_service.embed_texts(chunk_texts)
-        logger.info(f"Generated {len(embeddings)} embeddings")
-        
-        # Step 4: Store chunks in Supabase and prepare vector store data
-        logger.info(f"Saving chunks for document {document_id}")
-        chunk_metadata_list = []
-        
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            embedding_id = f"chunk_{document_id}_{i}"
-            
-            # Save chunk to Supabase (assuming you have a document_chunks table)
-            chunk_data = {
-                'document_id': document_id,
-                'chunk_index': chunk["chunk_index"],
-                'content': chunk["content"],
-                'page_number': chunk.get("page_number"),
-                'start_char': chunk["start_char"],
-                'end_char': chunk["end_char"],
-                'embedding_id': embedding_id
-            }
-            
-            try:
-                supabase.table('document_chunks').insert(chunk_data).execute()
-            except Exception as e:
-                logger.warning(f"Failed to insert chunk to Supabase (table may not exist): {e}")
-            
-            # Prepare metadata for vector store
-            metadata = {
-                "chunk_id": i,
-                "document_id": document_id,
-                "document_name": file_path.split(os.sep)[-1],  # filename
-                "case_id": case_id,
-                "page_number": chunk.get("page_number"),
-                "chunk_index": chunk["chunk_index"]
-            }
-            chunk_metadata_list.append(metadata)
-        
-        # Step 5: Add to vector store
-        logger.info(f"Storing embeddings in vector store")
-        chunk_docs = [{"content": chunk["content"]} for chunk in chunks]
-        vector_store.add_documents(chunk_docs, embeddings, chunk_metadata_list)
-        
-        # Step 6: Update document status to processed
-        supabase.table('documents').update({
-            'status': 'processed',
-            'processed_at': datetime.utcnow().isoformat()
-        }).eq('id', document_id).execute()
-        
-        logger.info(f"Document {document_id} processed successfully")
-        
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error processing document {document_id}: {error_msg}", exc_info=True)
-        traceback.print_exc()
-        # Update document status to error
-        # Note: Supabase may not have error_message column, so we just set status
-        try:
-            update_data = {'status': 'error'}
-            supabase.table('documents').update(update_data).eq('id', document_id).execute()
-            logger.info(f"Document {document_id} status updated to 'error'. Error: {error_msg}")
-        except Exception as update_error:
-            logger.error(f"Failed to update error status: {update_error}")
 
 
-@router.post("/documents/{document_id}/reprocess")
-async def reprocess_supabase_document(
-    document_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """Reprocess a failed Supabase document"""
-    # Get user ID from token - get_current_user_id is defined later in this file
-    # Import it or use inline verification
-    from app.core.supabase import get_supabase_client as get_supabase
-    supabase_client = get_supabase()
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
+async def get_current_user_id(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> int:
+    """Get current user ID from JWT token"""
+    from app.core.security import verify_token
+    from app.models.user import User
     
-    # Verify token with Supabase
     token = credentials.credentials
-    try:
-        user_response = supabase_client.auth.get_user(token)
-        if not user_response or not user_response.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        user_id = user_response.user.id
-    except Exception as e:
-        logger.error(f"Token verification failed: {e}")
-        raise HTTPException(status_code=401, detail="Invalid token")
     
-    try:
-        # Get document from Supabase
-        response = supabase.table('documents').select('*').eq('id', document_id).single().execute()
-        document = response.data if hasattr(response, 'data') else None
-        
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        # Verify file exists
-        file_path = document.get('file_path')
-        if not file_path or not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Document file not found on disk")
-        
-        # Update status to processing
-        supabase.table('documents').update({
-            'status': 'processing',
-            'processed_at': None
-        }).eq('id', document_id).execute()
-        
-        # Start background processing
-        file_ext = document.get('file_type', '')
-        case_id = document.get('case_id', '')
-        
-        thread = threading.Thread(
-            target=process_supabase_document_background,
-            args=(document_id, file_path, file_ext, case_id),
-            daemon=False
-        )
-        thread.start()
-        logger.info(f"Started reprocessing thread for document {document_id}")
-        
-        return {
-            "id": document_id,
-            "status": "processing",
-            "message": "Document reprocessing started"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error reprocessing document {document_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    """Get current user ID from Supabase token"""
-    token = credentials.credentials
-    supabase = get_supabase_client()
-    
-    if not supabase:
-        print("ERROR: Supabase client not available in get_current_user_id")
-        raise HTTPException(status_code=500, detail="Supabase not configured")
-    
-    try:
-        print(f"Verifying token (length: {len(token)})")
-        response = supabase.auth.get_user(token)
-        if not response.user:
-            print("ERROR: No user in response")
-            raise HTTPException(status_code=401, detail="Invalid token")
-        user_id = response.user.id
-        print(f"Successfully authenticated user: {user_id}")
-        return user_id
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        print(f"Error getting user from token: {e}")
-        print(f"Traceback: {traceback.format_exc()}")
+    # Verify JWT token
+    payload = verify_token(token)
+    if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    # sub is stored as string in JWT, convert to int
+    user_id = int(payload.get("sub"))
+    
+    # Get user from database to verify they exist
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="User account is inactive")
+    
+    return user_id
+
+
+# Helper functions for OAuth connections
+def get_oauth_connection(user_id: int, provider: str, db: Session) -> Optional[OAuthConnection]:
+    """Get OAuth connection for a user and provider"""
+    return db.query(OAuthConnection).filter(
+        OAuthConnection.user_id == user_id,
+        OAuthConnection.provider == provider
+    ).first()
+
+
+def create_oauth_connection(
+    user_id: int,
+    provider: str,
+    access_token: str,
+    refresh_token: Optional[str] = None,
+    token_expires_at: Optional[datetime] = None,
+    db: Session = None
+) -> Optional[OAuthConnection]:
+    """Create or update an OAuth connection"""
+    if db is None:
+        return None
+    
+    # Check if connection already exists
+    existing = get_oauth_connection(user_id, provider, db)
+    
+    if existing:
+        # Update existing connection
+        existing.access_token = access_token
+        existing.refresh_token = refresh_token
+        existing.token_expires_at = token_expires_at
+        db.commit()
+        db.refresh(existing)
+        return existing
+    else:
+        # Create new connection
+        connection = OAuthConnection(
+            id=str(uuid4()),
+            user_id=user_id,
+            provider=provider,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_expires_at=token_expires_at
+        )
+        db.add(connection)
+        db.commit()
+        db.refresh(connection)
+        return connection
+
+
+def update_oauth_connection(
+    user_id: int,
+    provider: str,
+    updates: dict,
+    db: Session
+) -> Optional[OAuthConnection]:
+    """Update an OAuth connection"""
+    connection = get_oauth_connection(user_id, provider, db)
+    if connection:
+        for key, value in updates.items():
+            setattr(connection, key, value)
+        db.commit()
+        db.refresh(connection)
+        return connection
+    return None
+
+
+def delete_oauth_connection(user_id: int, provider: str, db: Session) -> bool:
+    """Delete an OAuth connection"""
+    connection = get_oauth_connection(user_id, provider, db)
+    if connection:
+        db.delete(connection)
+        db.commit()
+        return True
+    return False
 
 
 @router.get("/google/authorize")
 async def get_google_authorize_url(
-    user_id: str = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id)
 ):
     """Get Google OAuth authorization URL"""
     # Debug: Log what we have (without exposing secrets)
@@ -350,7 +209,8 @@ async def get_google_authorize_url(
 @router.get("/google/callback")
 async def google_oauth_callback(
     code: str = Query(...),
-    user_id: str = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
 ):
     """Handle Google OAuth callback and store tokens"""
     from urllib.parse import unquote
@@ -380,7 +240,7 @@ async def google_oauth_callback(
         redirect_uri = settings.GOOGLE_REDIRECT_URI.strip()
         
         # Check if connection already exists - if so, we might be retrying with an expired code
-        existing_connection = get_oauth_connection(user_id, 'google_drive')
+        existing_connection = get_oauth_connection(user_id, 'google_drive', db)
         if existing_connection:
             print(f"WARNING: OAuth connection already exists for user {user_id}. This might be a retry with an expired code.")
             # If the connection exists and is valid, return success
@@ -394,12 +254,18 @@ async def google_oauth_callback(
         
         # Store connection in database
         print(f"Storing OAuth connection for user: {user_id}")
+        token_expires_at = None
+        if tokens.get('expires_in'):
+            from datetime import timedelta
+            token_expires_at = datetime.utcnow() + timedelta(seconds=tokens['expires_in'])
+        
         connection = create_oauth_connection(
             user_id=user_id,
             provider='google_drive',
             access_token=tokens['access_token'],
             refresh_token=tokens.get('refresh_token'),
-            token_expires_at=tokens.get('token_expires_at')
+            token_expires_at=token_expires_at,
+            db=db
         )
         
         if not connection:
@@ -431,7 +297,8 @@ async def google_oauth_callback(
 
 @router.get("/google/status")
 async def get_google_status(
-    user_id: str = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
 ):
     """Check if user has connected Google Drive"""
     # #region agent log
@@ -445,7 +312,7 @@ async def get_google_status(
     # #endregion
     
     try:
-        connection = get_oauth_connection(user_id, 'google_drive')
+        connection = get_oauth_connection(user_id, 'google_drive', db)
         is_connected = connection is not None
         
         # #region agent log
@@ -480,15 +347,16 @@ async def get_google_client_id():
 
 @router.get("/google/access-token")
 async def get_google_access_token(
-    user_id: str = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
 ):
     """Get current Google Drive access token for Picker API"""
-    connection = get_oauth_connection(user_id, 'google_drive')
+    connection = get_oauth_connection(user_id, 'google_drive', db)
     if not connection:
         raise HTTPException(status_code=404, detail="Google Drive not connected")
     
     # Check if token needs refresh
-    service = GoogleDriveService(user_id)
+    service = GoogleDriveService(user_id, db, get_oauth_connection, update_oauth_connection)
     access_token = service.get_access_token()
     
     if not access_token:
@@ -499,10 +367,11 @@ async def get_google_access_token(
 
 @router.delete("/google/disconnect")
 async def disconnect_google(
-    user_id: str = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
 ):
     """Disconnect Google Drive"""
-    success = delete_oauth_connection(user_id, 'google_drive')
+    success = delete_oauth_connection(user_id, 'google_drive', db)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to disconnect Google Drive")
     return {"status": "disconnected", "message": "Google Drive disconnected successfully"}
@@ -512,11 +381,12 @@ async def disconnect_google(
 async def list_google_files(
     folder_id: Optional[str] = Query(None, description="Folder ID to list files from. None for root."),
     search: Optional[str] = Query(None, description="Search query to filter files by name."),
-    user_id: str = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
 ):
     """List files from Google Drive"""
     try:
-        service = GoogleDriveService(user_id)
+        service = GoogleDriveService(user_id, db, get_oauth_connection, update_oauth_connection)
         files = service.list_files(folder_id=folder_id, search_query=search)
         return {"files": files}
     except Exception as e:
@@ -527,11 +397,12 @@ async def list_google_files(
 @router.get("/google/files/recent")
 async def list_recent_google_files(
     search: Optional[str] = Query(None, description="Search query to filter files by name."),
-    user_id: str = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
 ):
     """List recently accessed files from Google Drive"""
     try:
-        service = GoogleDriveService(user_id)
+        service = GoogleDriveService(user_id, db, get_oauth_connection, update_oauth_connection)
         files = service.list_recent_files(search_query=search)
         return {"files": files}
     except Exception as e:
@@ -542,11 +413,12 @@ async def list_recent_google_files(
 @router.get("/google/files/shared")
 async def list_shared_google_files(
     search: Optional[str] = Query(None, description="Search query to filter files by name."),
-    user_id: str = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
 ):
     """List files shared with the user from Google Drive"""
     try:
-        service = GoogleDriveService(user_id)
+        service = GoogleDriveService(user_id, db, get_oauth_connection, update_oauth_connection)
         files = service.list_shared_files(search_query=search)
         return {"files": files}
     except Exception as e:
@@ -578,8 +450,13 @@ async def get_google_drive_thumbnail(
             try:
                 # Create credentials object for get_current_user_id
                 from fastapi.security import HTTPAuthorizationCredentials
+                from app.core.database import SessionLocal
                 credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-                user_id = get_current_user_id(credentials)
+                temp_db = SessionLocal()
+                try:
+                    user_id = await get_current_user_id(credentials, temp_db)
+                finally:
+                    temp_db.close()
                 # #region agent log
                 try:
                     with open(log_path, "a", encoding="utf-8") as f:
@@ -605,8 +482,12 @@ async def get_google_drive_thumbnail(
             raise HTTPException(status_code=401, detail="Authentication required")
         
         # Check if Google Drive is connected for this user
-        drive_service_check = GoogleDriveService(user_id)
-        oauth_connection = drive_service_check._get_connection()
+        from app.core.database import SessionLocal
+        temp_db = SessionLocal()
+        try:
+            oauth_connection = get_oauth_connection(user_id, 'google_drive', temp_db)
+        finally:
+            temp_db.close()
         # #region agent log
         try:
             with open(log_path, "a", encoding="utf-8") as f:
@@ -615,8 +496,12 @@ async def get_google_drive_thumbnail(
         # #endregion
         
         # Get access token for this user
-        service = GoogleDriveService(user_id)
-        access_token = service.get_access_token()
+        temp_db = SessionLocal()
+        try:
+            service = GoogleDriveService(user_id, temp_db, get_oauth_connection, update_oauth_connection)
+            access_token = service.get_access_token()
+        finally:
+            temp_db.close()
         
         # #region agent log
         try:
@@ -629,27 +514,28 @@ async def get_google_drive_thumbnail(
             raise HTTPException(status_code=401, detail="Failed to get access token")
         
         # Use Google Drive API to get file metadata with thumbnailLink
-        drive_service = GoogleDriveService(user_id)
-        # #region agent log
+        temp_db2 = SessionLocal()
         try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H8","location":"integrations.py:380","message":"Initializing Google Drive service","data":{"user_id":user_id,"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
-        except: pass
-        # #endregion
-        
-        # Load credentials and build service (this returns True if successful)
-        service_initialized = drive_service._load_credentials()
-        # #region agent log
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H8","location":"integrations.py:383","message":"Service initialization result","data":{"initialized":service_initialized,"has_service":drive_service.service is not None,"user_id":user_id,"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
-        except: pass
-        # #endregion
-        
-        if not service_initialized or not drive_service.service:
-            raise HTTPException(status_code=401, detail="Failed to initialize Google Drive service")
-        
-        try:
+            drive_service = GoogleDriveService(user_id, temp_db2, get_oauth_connection, update_oauth_connection)
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H8","location":"integrations.py:380","message":"Initializing Google Drive service","data":{"user_id":user_id,"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            
+            # Load credentials and build service (this returns True if successful)
+            service_initialized = drive_service._load_credentials()
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H8","location":"integrations.py:383","message":"Service initialization result","data":{"initialized":service_initialized,"has_service":drive_service.service is not None,"user_id":user_id,"file_id":file_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            
+            if not service_initialized or not drive_service.service:
+                raise HTTPException(status_code=401, detail="Failed to initialize Google Drive service")
+            
             # Get file metadata including thumbnailLink
             # #region agent log
             try:
@@ -728,9 +614,11 @@ async def get_google_drive_thumbnail(
                         "Cache-Control": "public, max-age=3600"  # Cache for 1 hour
                     }
                 )
-        except HTTPException:
-            raise
-        except Exception as api_error:
+        finally:
+            temp_db2.close()
+    except HTTPException:
+        raise
+    except Exception as api_error:
             # #region agent log
             try:
                 with open(log_path, "a", encoding="utf-8") as f:
@@ -762,29 +650,34 @@ async def get_google_drive_thumbnail(
 
 @router.post("/google/import")
 async def import_google_file(
-    case_id: str = Query(..., description="Case ID (UUID from Supabase)"),
+    case_id: int = Query(..., description="Case ID"),
     file_id: str = Query(..., description="Google Drive file ID"),
     bates_number: Optional[str] = Query(None),
     custodian: Optional[str] = Query(None),
     author: Optional[str] = Query(None),
     document_date: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
-    user_id: str = Depends(get_current_user_id)
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant),
+    db: Session = Depends(get_db)
 ):
     """Import a file from Google Drive to a case"""
+    from app.models.case import Case, Document
+    from pathlib import Path
+    from datetime import datetime as dt
+    
+    user_id, tenant_id = user_tenant
+    
     try:
-        from app.core.supabase_db import get_user_profile
-        from app.core.database import get_db, SessionLocal
-        from app.models.case import Case, Document
-        from app.services.document_processor import DocumentProcessor
-        from app.services.embedding_service import EmbeddingService
-        from app.services.vector_store import VectorStore
-        from datetime import datetime
-        from pathlib import Path
-        import os
+        # Verify case exists and belongs to tenant
+        case = db.query(Case).filter(
+            Case.id == case_id,
+            Case.tenant_id == tenant_id
+        ).first()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
         
         # Download file from Google Drive
-        service = GoogleDriveService(user_id)
+        service = GoogleDriveService(user_id, db, get_oauth_connection, update_oauth_connection)
         file_content, filename = service.download_file(file_id)
         file_metadata = service.get_file_metadata(file_id)
         
@@ -804,9 +697,7 @@ async def import_google_file(
                 detail=f"File too large. Maximum size: {settings.MAX_FILE_SIZE_MB}MB"
             )
         
-        # Note: Since we're using Supabase cases (UUID), we need to handle this differently
-        # For now, we'll save the file and create a document record in Supabase
-        # The case_id is a UUID string from Supabase
+        # Save file
         case_dir = os.path.join(settings.UPLOAD_DIR, f"case_{case_id}")
         os.makedirs(case_dir, exist_ok=True)
         
@@ -814,52 +705,53 @@ async def import_google_file(
         with open(file_path, "wb") as f:
             f.write(file_content)
         
-        # Create document record in Supabase
-        supabase = get_supabase_client()
-        if not supabase:
-            raise HTTPException(status_code=500, detail="Supabase not configured")
+        # Parse document_date if provided
+        parsed_date = None
+        if document_date:
+            try:
+                parsed_date = dt.fromisoformat(document_date.replace('Z', '+00:00'))
+            except:
+                pass
         
-        document_data = {
-            'case_id': case_id,
-            'filename': filename,
-            'original_filename': filename,
-            'file_path': file_path,
-            'file_type': file_ext,
-            'file_size': file_size,
-            'mime_type': file_metadata.get('mimeType'),
-            'bates_number': bates_number,
-            'custodian': custodian,
-            'author': author,
-            'document_date': document_date,
-            'source': source or 'google_drive',
-            'uploaded_by': user_id,
-            'status': 'processing'
-        }
+        # Create document record in PostgreSQL
+        document = Document(
+            case_id=case_id,
+            filename=filename,
+            original_filename=filename,
+            file_path=file_path,
+            file_type=file_ext,
+            file_size=file_size,
+            mime_type=file_metadata.get('mimeType'),
+            bates_number=bates_number,
+            custodian=custodian,
+            author=author,
+            document_date=parsed_date,
+            source=source or 'google_drive',
+            uploaded_by=user_id,
+            status='processing'
+        )
+        db.add(document)
+        db.commit()
+        db.refresh(document)
         
-        response = supabase.table('documents').insert(document_data).execute()
-        document = response.data[0] if response.data else None
-        
-        if not document:
-            raise HTTPException(status_code=500, detail="Failed to create document record")
-        
-        # Process document in background for Supabase
-        document_id = document['id']
+        # Process document in background (use the existing process_document_background from documents.py)
+        from app.api.v1.documents import process_document_background
         thread = threading.Thread(
-            target=process_supabase_document_background,
-            args=(document_id, file_path, file_ext, case_id),
+            target=process_document_background,
+            args=(document.id, file_path, file_ext, case_id, tenant_id),
             daemon=False
         )
         thread.start()
-        logger.info(f"Started background processing thread for document {document_id}")
+        logger.info(f"Started background processing thread for document {document.id}")
         
         return {
-            "id": document['id'],
-            "case_id": document['case_id'],
-            "filename": document['filename'],
-            "original_filename": document['original_filename'],
-            "file_type": document['file_type'],
-            "file_size": document['file_size'],
-            "status": document['status'],
+            "id": document.id,
+            "case_id": document.case_id,
+            "filename": document.filename,
+            "original_filename": document.original_filename,
+            "file_type": document.file_type,
+            "file_size": document.file_size,
+            "status": document.status,
             "message": "File imported from Google Drive successfully"
         }
     except HTTPException:

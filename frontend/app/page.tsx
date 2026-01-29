@@ -15,8 +15,11 @@ export default function Home() {
     if (!loading && user && typeof window !== 'undefined') {
       const currentPath = window.location.pathname
       if (currentPath === '/' || currentPath === '') {
+        // Super admin users go to admin portal, others go to workspace
+        const isSuperAdmin = user.role === 'super_admin' || user.role === 'SUPER_ADMIN'
+        const redirectPath = isSuperAdmin ? '/admin' : '/workspace'
         // Use replace instead of push to avoid adding to history
-        router.replace('/workspace')
+        router.replace(redirectPath)
       }
     }
   }, [user, loading, router])

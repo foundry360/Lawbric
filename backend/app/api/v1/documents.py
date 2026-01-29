@@ -2,7 +2,7 @@
 Document management endpoints
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -15,13 +15,16 @@ import traceback
 
 from app.core.database import get_db, SessionLocal
 from app.core.config import settings
-from app.core.security import verify_token
-from app.core.supabase import get_supabase_client
+from app.core.auth import get_current_user_and_tenant
 from app.models.case import Case, Document, DocumentChunk
+from typing import Tuple
 from app.schemas.case import DocumentResponse, DocumentCreate
 from app.services.document_processor import DocumentProcessor
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
+from app.services.risk_engine import RiskEngine
+from app.utils.audit import log_immutable_audit
+from app.core.config import settings
 import logging
 import json
 
@@ -48,37 +51,35 @@ def agent_log(session_id, run_id, hypothesis_id, location, message, data=None):
         pass
 # #endregion
 
-processor = DocumentProcessor()
-embedding_service = EmbeddingService()
-vector_store = VectorStore()
+# Note: These are shared instances but the services should be thread-safe or we create per-thread instances
+# For better reliability, we'll create new instances in background threads
+_processor = None
+_embedding_service = None
+_vector_store = None
+
+def get_processor():
+    """Get or create document processor (thread-safe lazy initialization)"""
+    global _processor
+    if _processor is None:
+        _processor = DocumentProcessor()
+    return _processor
+
+def get_embedding_service():
+    """Get or create embedding service (thread-safe lazy initialization)"""
+    global _embedding_service
+    if _embedding_service is None:
+        _embedding_service = EmbeddingService()
+    return _embedding_service
+
+def get_vector_store():
+    """Get or create vector store (thread-safe lazy initialization)"""
+    global _vector_store
+    if _vector_store is None:
+        _vector_store = VectorStore()
+    return _vector_store
 
 
-async def get_current_user_id(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> str:
-    """Get current user ID from Supabase token"""
-    token = credentials.credentials
-    supabase = get_supabase_client()
-    
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
-    
-    try:
-        # Verify token with Supabase
-        response = supabase.auth.get_user(token)
-        if not response.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        
-        # Return user ID as string (UUID from Supabase)
-        return response.user.id
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error verifying token: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-
-def process_document_background(document_id: int, file_path: str, file_ext: str, case_id: int):
+def process_document_background(document_id: int, file_path: str, file_ext: str, case_id: int, tenant_id: int = None):
     """
     Background task to process a document asynchronously
     This function runs in a separate thread/process after the upload endpoint returns
@@ -111,7 +112,7 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
         # #endregion
         logger.info(f"Database session created for document {document_id}")
         
-        # Get the document
+        # Get the document and case to retrieve tenant_id
         # #region agent log
         agent_log("debug-session", "run1", "D", "documents.py:63", "Before document query", {"document_id": document_id})
         # #endregion
@@ -130,12 +131,65 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
             # #endregion
             return
         
+        # Get tenant_id from case if not provided
+        if tenant_id is None:
+            case = db.query(Case).filter(Case.id == document.case_id).first()
+            if case:
+                tenant_id = case.tenant_id
+        
         logger.info(f"Document {document_id} retrieved, current status: {document.status}")
         
         # Explicitly set status to processing at start of background task
         document.status = "processing"
         db.commit()
         logger.info(f"Document {document_id} status set to 'processing', starting background processing")
+        
+        # Verify file exists and is readable before starting processing
+        # This handles cases where the file might not be fully written yet
+        max_retries = 3
+        retry_delay = 0.5  # seconds
+        for attempt in range(max_retries):
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                try:
+                    # Try to open the file to ensure it's readable
+                    with open(file_path, "rb") as test_file:
+                        test_file.read(1)
+                    break  # File is readable, proceed
+                except (IOError, OSError) as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"File {file_path} not readable on attempt {attempt + 1}, retrying...")
+                        import time
+                        time.sleep(retry_delay)
+                    else:
+                        raise FileNotFoundError(f"Document file exists but is not readable after {max_retries} attempts: {file_path}")
+            else:
+                if attempt < max_retries - 1:
+                    logger.warning(f"File {file_path} not found on attempt {attempt + 1}, retrying...")
+                    import time
+                    time.sleep(retry_delay)
+                else:
+                    raise FileNotFoundError(f"Document file not found after {max_retries} attempts: {file_path}")
+        
+        # Create thread-local instances of services to avoid thread-safety issues
+        # This ensures each thread gets its own instances
+        # Wrap initialization in try-except to handle transient resource failures
+        try:
+            processor = DocumentProcessor()
+        except Exception as e:
+            logger.error(f"Failed to initialize DocumentProcessor: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize document processor: {str(e)}")
+        
+        try:
+            embedding_service = EmbeddingService()
+        except Exception as e:
+            logger.error(f"Failed to initialize EmbeddingService: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize embedding service: {str(e)}")
+        
+        try:
+            vector_store = VectorStore()
+        except Exception as e:
+            logger.error(f"Failed to initialize VectorStore: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize vector store: {str(e)}")
         
         # Step 0: Generate thumbnail
         logger.info(f"Generating thumbnail for document {document_id}")
@@ -280,16 +334,23 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
             embedding_id = f"chunk_{db_chunk.id}"
             chunk_ids_list.append((db_chunk.id, embedding_id))
             
-            # Prepare metadata for vector store
+            # Prepare metadata for vector store (with tenant isolation)
+            # Filter out None values as vector stores don't accept them
             metadata = {
                 "chunk_id": db_chunk.id,
                 "document_id": document.id,
                 "document_name": document.original_filename,
                 "case_id": case_id,
-                "page_number": chunk.get("page_number"),
-                "paragraph_number": chunk.get("paragraph_number"),
                 "chunk_index": chunk["chunk_index"]
             }
+            # Only add optional fields if they are not None
+            if chunk.get("page_number") is not None:
+                metadata["page_number"] = chunk.get("page_number")
+            if chunk.get("paragraph_number") is not None:
+                metadata["paragraph_number"] = chunk.get("paragraph_number")
+            # Add tenant_id for multi-tenant isolation
+            if tenant_id is not None:
+                metadata["tenant_id"] = tenant_id
             chunk_metadata_list.append(metadata)
         
         db.commit()
@@ -377,11 +438,17 @@ async def upload_document(
     document_date: Optional[str] = Form(None),
     source: Optional[str] = Form(None),
     db: Session = Depends(get_db),
-    user_id: str = Depends(get_current_user_id)
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
 ):
-    """Upload and process a document"""
-    # Verify case exists
-    case = db.query(Case).filter(Case.id == case_id).first()
+    """Upload and process a document (tenant-isolated)"""
+    user_id, tenant_id = user_tenant
+    
+    # Verify case exists, belongs to tenant, and was created by the current user
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.tenant_id == tenant_id,
+        Case.created_by == user_id
+    ).first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -407,8 +474,18 @@ async def upload_document(
     os.makedirs(case_dir, exist_ok=True)
     
     file_path = os.path.join(case_dir, file.filename)
+    # Ensure file is fully written and flushed to disk before processing
     with open(file_path, "wb") as f:
         f.write(file_content)
+        f.flush()
+        os.fsync(f.fileno())  # Force write to disk
+    
+    # Verify file was written correctly before proceeding
+    if not os.path.exists(file_path) or os.path.getsize(file_path) != file_size:
+        raise HTTPException(
+            status_code=500,
+            detail="File upload verification failed. File may not have been saved correctly."
+        )
     
     # Create document record
     document = Document(
@@ -424,7 +501,7 @@ async def upload_document(
         author=author,
         document_date=datetime.fromisoformat(document_date) if document_date else None,
         source=source,
-        uploaded_by=user_id,
+        uploaded_by=user_id if isinstance(user_id, int) else int(user_id) if user_id.isdigit() else None,
         status="processing"
     )
     db.add(document)
@@ -457,7 +534,7 @@ async def upload_document(
     # Wrap the background function to ensure exceptions are logged
     def wrapped_process():
         try:
-            process_document_background(document.id, file_path, file_ext, case_id)
+            process_document_background(document.id, file_path, file_ext, case_id, tenant_id)
         except Exception as e:
             logger.error(f"CRITICAL: Background thread for document {document.id} failed with uncaught exception: {e}", exc_info=True)
             # Try to update status to error
@@ -499,23 +576,45 @@ async def upload_document(
 
 @router.get("/{document_id}/thumbnail")
 async def get_document_thumbnail(
-    document_id: int,
+    document_id: str,  # Can be UUID string or integer
     db: Session = Depends(get_db),
-    user_id: str = Depends(get_current_user_id)
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
 ):
-    """Get thumbnail image for a document"""
+    """Get thumbnail image for a document (tenant-isolated)"""
     from fastapi.responses import FileResponse
     
-    document = db.query(Document).filter(Document.id == document_id).first()
+    user_id, tenant_id = user_tenant
+    
+    # Convert document_id to integer
+    try:
+        doc_id_int = int(document_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid document_id format")
+    
+    # Get document with tenant isolation
+    document = db.query(Document).filter(Document.id == doc_id_int).first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Check if thumbnail exists
-    if not document.thumbnail_path:
+    # Verify document was uploaded by the current user
+    if document.uploaded_by != user_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document's case belongs to tenant and was created by the current user
+    case = db.query(Case).filter(
+        Case.id == document.case_id,
+        Case.tenant_id == tenant_id,
+        Case.created_by == user_id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    thumbnail_path = document.thumbnail_path
+    
+    if not thumbnail_path:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
     
     # Handle both absolute and relative paths
-    thumbnail_path = document.thumbnail_path
     if not os.path.isabs(thumbnail_path):
         # If relative, try to resolve it relative to thumbnail directory
         thumbnail_path = os.path.join(settings.THUMBNAIL_DIR, os.path.basename(thumbnail_path))
@@ -524,7 +623,7 @@ async def get_document_thumbnail(
     thumbnail_path = os.path.abspath(thumbnail_path)
     
     if not os.path.exists(thumbnail_path):
-        logger.warning(f"Thumbnail file not found at path: {thumbnail_path} (stored path: {document.thumbnail_path})")
+        logger.warning(f"Thumbnail file not found at path: {thumbnail_path}")
         raise HTTPException(status_code=404, detail="Thumbnail file not found on disk")
     
     return FileResponse(
@@ -534,44 +633,386 @@ async def get_document_thumbnail(
     )
 
 
-@router.get("", response_model=List[DocumentResponse])
+@router.get("")
 async def list_documents(
-    case_id: int,
+    case_id: str = Query(..., description="Case ID (integer)"),
     db: Session = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
-    skip: int = 0,
-    limit: int = 100
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000)
 ):
-    """List documents for a case"""
+    """List documents for a case (tenant-isolated)"""
+    user_id, tenant_id = user_tenant
+    
+    # Convert case_id to integer
+    try:
+        case_id_int = int(case_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid case_id format")
+    
+    # Verify case belongs to tenant and was created by the current user
+    case = db.query(Case).filter(
+        Case.id == case_id_int,
+        Case.tenant_id == tenant_id,
+        Case.created_by == user_id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found or access denied")
+    
+    # Query documents for this case that were uploaded by the current user
+    # Users only see documents they uploaded
+    # Filter out archived documents
     documents = db.query(Document).filter(
-        Document.case_id == case_id
-    ).offset(skip).limit(limit).all()
+        Document.case_id == case_id_int,
+        Document.uploaded_by == user_id,
+        Document.is_archived == False
+    ).order_by(Document.id.desc()).offset(skip).limit(limit).all()
+    
     return documents
 
 
-@router.get("/{document_id}", response_model=DocumentResponse)
+@router.get("/{document_id}")
 async def get_document(
-    document_id: int,
+    document_id: str,  # Integer ID as string
     db: Session = Depends(get_db),
-    user_id: str = Depends(get_current_user_id)
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
 ):
-    """Get a specific document"""
-    document = db.query(Document).filter(Document.id == document_id).first()
+    """Get a specific document (tenant-isolated)"""
+    user_id, tenant_id = user_tenant
+    
+    # Convert document_id to integer
+    try:
+        doc_id_int = int(document_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid document_id format")
+    
+    # Get document
+    document = db.query(Document).filter(Document.id == doc_id_int).first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document's case belongs to tenant - this ensures tenant isolation
+    case = db.query(Case).filter(
+        Case.id == document.case_id,
+        Case.tenant_id == tenant_id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
     return document
+
+
+async def get_document_from_db(document_id, tenant_id: int = None, db: Session = None):
+    """Get document from PostgreSQL database (with tenant isolation)
+    
+    Returns a dict with document fields, or None if not found
+    """
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    else:
+        should_close = False
+    
+    try:
+        # Convert document_id to int if it's a string
+        doc_id = int(document_id) if isinstance(document_id, str) else document_id
+        document = db.query(Document).filter(Document.id == doc_id).first()
+        if document:
+            # Verify document's case belongs to tenant
+            if tenant_id is not None:
+                case = db.query(Case).filter(
+                    Case.id == document.case_id,
+                    Case.tenant_id == tenant_id
+                ).first()
+                if not case:
+                    return None
+            
+            # Convert SQLAlchemy model to dict
+            return {
+                'id': document.id,
+                'file_path': document.file_path,
+                'original_filename': document.original_filename,
+                'file_type': document.file_type,
+                'extracted_text': document.extracted_text,
+                'status': document.status,
+                'thumbnail_path': document.thumbnail_path,
+                'case_id': document.case_id
+            }
+    except ValueError:
+        logger.error(f"Invalid document_id format: {document_id}")
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching document from database: {e}")
+        return None
+    finally:
+        if should_close:
+            db.close()
+    return None
+
+
+@router.get("/{document_id}/content")
+async def get_document_content(
+    document_id: str,  # Can be UUID string or integer
+    db: Session = Depends(get_db),
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
+):
+    """Get document content including extracted text (tenant-isolated)"""
+    user_id, tenant_id = user_tenant
+    
+    # Convert document_id to integer
+    try:
+        doc_id_int = int(document_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid document_id format")
+    
+    # Get document with tenant isolation
+    document = db.query(Document).filter(Document.id == doc_id_int).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document was uploaded by the current user
+    if document.uploaded_by != user_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document's case belongs to tenant and was created by the current user
+    case = db.query(Case).filter(
+        Case.id == document.case_id,
+        Case.tenant_id == tenant_id,
+        Case.created_by == user_id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Risk assessment
+    if settings.RISK_ENABLED:
+        try:
+            risk_engine = RiskEngine(
+                profile_a_max=settings.RISK_PROFILE_A_MAX,
+                profile_b_max=settings.RISK_PROFILE_B_MAX,
+                profile_c_max=settings.RISK_PROFILE_C_MAX
+            )
+            
+            extracted_text = document.extracted_text or ""
+            risk_score = risk_engine.assess_risk(
+                text=extracted_text,
+                action="GET /api/v1/documents/{id}/content",
+                document_metadata={"file_type": document.file_type}
+            )
+            
+            # Immutable logging for Profile C only
+            if risk_score.requires_logging:
+                case_id = document.case_id
+                log_immutable_audit(
+                    db=db,
+                    user_id=user_id,
+                    action="document_content_access",
+                    document_id=str(document_id),
+                    risk_score={
+                        "total_score": risk_score.total_score,
+                        "profile": risk_score.governance_profile.value,
+                        "pii_detected": risk_score.pii_detected,
+                        "legal_signals": risk_score.legal_signals,
+                        "intent_risk": risk_score.intent_risk,
+                        "data_sensitivity_score": risk_score.data_sensitivity_score
+                    },
+                    case_id=str(case_id) if case_id else None
+                )
+        except Exception as e:
+            logger.warning(f"Risk assessment failed for document {document_id}: {e}", exc_info=True)
+            # Continue with request even if risk assessment fails
+    
+    # Increment view count
+    try:
+        document.view_count = (document.view_count or 0) + 1
+        db.commit()
+        logger.info(f"Incremented view count for document {doc_id_int} to {document.view_count}")
+    except Exception as e:
+        logger.warning(f"Failed to increment view count for document {doc_id_int}: {e}")
+        db.rollback()
+        # Continue even if view count increment fails
+    
+    return {
+        "id": document.id,
+        "extracted_text": document.extracted_text or "",
+        "status": document.status or 'pending',
+        "file_type": document.file_type or 'pdf'
+    }
+
+
+@router.get("/{document_id}/file")
+async def get_document_file(
+    document_id: str,  # Can be UUID string or integer
+    db: Session = Depends(get_db),
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
+):
+    """Serve the actual document file (tenant-isolated)"""
+    from fastapi.responses import FileResponse
+    
+    user_id, tenant_id = user_tenant
+    
+    # Convert document_id to integer
+    try:
+        doc_id_int = int(document_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid document_id format")
+    
+    # Get document with tenant isolation
+    document = db.query(Document).filter(Document.id == doc_id_int).first()
+    if not document:
+        logger.warning(f"Document {doc_id_int} not found in database (get_document_file)")
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document was uploaded by the current user
+    if document.uploaded_by != user_id:
+        logger.warning(f"Document {doc_id_int} access denied: uploaded_by={document.uploaded_by}, current_user={user_id}")
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document's case belongs to tenant and was created by the current user
+    case = db.query(Case).filter(
+        Case.id == document.case_id,
+        Case.tenant_id == tenant_id,
+        Case.created_by == user_id
+    ).first()
+    if not case:
+        logger.warning(f"Document {doc_id_int} access denied: case {document.case_id} not found or not created by user {user_id}")
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Risk assessment
+    if settings.RISK_ENABLED:
+        try:
+            risk_engine = RiskEngine(
+                profile_a_max=settings.RISK_PROFILE_A_MAX,
+                profile_b_max=settings.RISK_PROFILE_B_MAX,
+                profile_c_max=settings.RISK_PROFILE_C_MAX
+            )
+            
+            extracted_text = document.extracted_text or ""
+            risk_score = risk_engine.assess_risk(
+                text=extracted_text,
+                action="GET /api/v1/documents/{id}/file",
+                document_metadata={"file_type": document.file_type}
+            )
+            
+            # Immutable logging for Profile C only
+            if risk_score.requires_logging:
+                log_immutable_audit(
+                    db=db,
+                    user_id=user_id,
+                    action="document_file_access",
+                    document_id=str(document_id),
+                    risk_score={
+                        "total_score": risk_score.total_score,
+                        "profile": risk_score.governance_profile.value,
+                        "pii_detected": risk_score.pii_detected,
+                        "legal_signals": risk_score.legal_signals,
+                        "intent_risk": risk_score.intent_risk,
+                        "data_sensitivity_score": risk_score.data_sensitivity_score
+                    },
+                    case_id=str(document.case_id)
+                )
+        except Exception as e:
+            logger.warning(f"Risk assessment failed for document {document_id}: {e}", exc_info=True)
+            # Continue with request even if risk assessment fails
+    
+    file_path = document.file_path
+    if not file_path:
+        raise HTTPException(status_code=404, detail="Document file path not found")
+    
+    # Check if file exists
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Document file not found on disk: {file_path}")
+    
+    # Determine media type
+    media_type_map = {
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "doc": "application/msword",
+        "txt": "text/plain"
+    }
+    
+    file_type = (document.file_type or 'pdf').lower()
+    media_type = media_type_map.get(file_type, "application/octet-stream")
+    original_filename = document.original_filename or f'document.{file_type}'
+    
+    # Increment view count
+    try:
+        document.view_count = (document.view_count or 0) + 1
+        db.commit()
+        logger.info(f"Incremented view count for document {doc_id_int} to {document.view_count}")
+    except Exception as e:
+        logger.warning(f"Failed to increment view count for document {doc_id_int}: {e}")
+        db.rollback()
+        # Continue even if view count increment fails
+    
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        filename=original_filename
+    )
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document_id: int,
     db: Session = Depends(get_db),
-    user_id: str = Depends(get_current_user_id)
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
 ):
-    """Delete a document"""
+    """Delete a document (tenant-isolated)"""
+    user_id, tenant_id = user_tenant
+    
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document was uploaded by the current user
+    if document.uploaded_by != user_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document's case belongs to tenant and was created by the current user
+    case = db.query(Case).filter(
+        Case.id == document.case_id,
+        Case.tenant_id == tenant_id,
+        Case.created_by == user_id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Risk assessment before deletion
+    if settings.RISK_ENABLED:
+        try:
+            risk_engine = RiskEngine(
+                profile_a_max=settings.RISK_PROFILE_A_MAX,
+                profile_b_max=settings.RISK_PROFILE_B_MAX,
+                profile_c_max=settings.RISK_PROFILE_C_MAX
+            )
+            
+            extracted_text = document.extracted_text or ""
+            risk_score = risk_engine.assess_risk(
+                text=extracted_text,
+                action="DELETE /api/v1/documents/{id}",
+                document_metadata={"file_type": document.file_type}
+            )
+            
+            # Immutable logging for Profile C only (before deletion)
+            if risk_score.requires_logging:
+                log_immutable_audit(
+                    db=db,
+                    user_id=user_id,
+                    action="document_delete",
+                    document_id=str(document_id),
+                    risk_score={
+                        "total_score": risk_score.total_score,
+                        "profile": risk_score.governance_profile.value,
+                        "pii_detected": risk_score.pii_detected,
+                        "legal_signals": risk_score.legal_signals,
+                        "intent_risk": risk_score.intent_risk,
+                        "data_sensitivity_score": risk_score.data_sensitivity_score
+                    },
+                    case_id=str(document.case_id) if document.case_id else None
+                )
+        except Exception as e:
+            logger.warning(f"Risk assessment failed for document {document_id}: {e}", exc_info=True)
+            # Continue with deletion even if risk assessment fails
     
     # Delete file
     if os.path.exists(document.file_path):
@@ -587,7 +1028,23 @@ async def delete_document(
     # Delete chunks from vector store
     chunk_ids = [f"chunk_{chunk.id}" for chunk in document.chunks]
     if chunk_ids:
-        vector_store.delete_documents(chunk_ids)
+        try:
+            vs = VectorStore()
+            vs.delete_documents(chunk_ids)
+        except Exception as e:
+            logger.warning(f"Error deleting chunks from vector store: {e}")
+    
+    # Set document_id to NULL in immutable audit logs before deletion
+    # This preserves the audit trail while allowing document deletion
+    try:
+        from app.models.audit import ImmutableAuditLog
+        db.query(ImmutableAuditLog).filter(
+            ImmutableAuditLog.document_id == document_id
+        ).update({ImmutableAuditLog.document_id: None})
+        db.flush()
+    except Exception as e:
+        logger.warning(f"Error updating audit logs before document deletion: {e}")
+        # Continue with deletion even if audit log update fails
     
     # Delete from database (cascade will handle chunks)
     db.delete(document)
@@ -596,20 +1053,104 @@ async def delete_document(
     return None
 
 
+@router.post("/{document_id}/archive", response_model=DocumentResponse)
+async def archive_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
+):
+    """Archive a document (soft delete, immutable for blockchain)"""
+    from datetime import datetime
+    user_id, tenant_id = user_tenant
+    
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document was uploaded by the current user
+    if document.uploaded_by != user_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document's case belongs to tenant and was created by the current user
+    case = db.query(Case).filter(
+        Case.id == document.case_id,
+        Case.tenant_id == tenant_id,
+        Case.created_by == user_id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check if already archived
+    if document.is_archived:
+        raise HTTPException(status_code=400, detail="Document is already archived")
+    
+    # Risk assessment before archiving
+    if settings.RISK_ENABLED:
+        try:
+            risk_engine = RiskEngine(
+                profile_a_max=settings.RISK_PROFILE_A_MAX,
+                profile_b_max=settings.RISK_PROFILE_B_MAX,
+                profile_c_max=settings.RISK_PROFILE_C_MAX
+            )
+            
+            extracted_text = document.extracted_text or ""
+            risk_score = risk_engine.assess_risk(
+                text=extracted_text,
+                action="ARCHIVE /api/v1/documents/{id}",
+                document_metadata={"file_type": document.file_type}
+            )
+            
+            # Immutable logging for Profile C only (before archiving)
+            if risk_score.requires_logging:
+                log_immutable_audit(
+                    db=db,
+                    user_id=user_id,
+                    action="document_archive",
+                    document_id=str(document_id),
+                    risk_score={
+                        "total_score": risk_score.total_score,
+                        "profile": risk_score.governance_profile.value,
+                        "pii_detected": risk_score.pii_detected,
+                        "legal_signals": risk_score.legal_signals,
+                        "intent_risk": risk_score.intent_risk,
+                        "data_sensitivity_score": risk_score.data_sensitivity_score
+                    },
+                    case_id=str(document.case_id) if document.case_id else None
+                )
+        except Exception as e:
+            logger.warning(f"Risk assessment failed for document {document_id}: {e}", exc_info=True)
+            # Continue with archiving even if risk assessment fails
+    
+    # Archive the document (soft delete)
+    document.is_archived = True
+    document.archived_at = datetime.now()
+    
+    db.commit()
+    db.refresh(document)
+    
+    logger.info(f"Document archived: {document_id} by user {user_id}")
+    return document
+
+
 @router.post("/{document_id}/reprocess", response_model=DocumentResponse)
 async def reprocess_document(
     document_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    user_id: str = Depends(get_current_user_id)
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
 ):
-    """Reprocess a failed or existing document"""
+    """Reprocess a failed or existing document (tenant-isolated)"""
+    user_id, tenant_id = user_tenant
+    
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Verify user has access to the case
-    case = db.query(Case).filter(Case.id == document.case_id).first()
+    # Verify case belongs to tenant
+    case = db.query(Case).filter(
+        Case.id == document.case_id,
+        Case.tenant_id == tenant_id
+    ).first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -622,7 +1163,8 @@ async def reprocess_document(
         chunk_ids = [f"chunk_{chunk.id}" for chunk in document.chunks]
         if chunk_ids:
             try:
-                vector_store.delete_documents(chunk_ids)
+                vs = VectorStore()
+                vs.delete_documents(chunk_ids)
             except Exception as e:
                 logger.warning(f"Error deleting old chunks from vector store: {e}")
         
@@ -652,7 +1194,7 @@ async def reprocess_document(
     
     thread = threading.Thread(
         target=process_document_background,
-        args=(document.id, document.file_path, document.file_type, document.case_id),
+        args=(document.id, document.file_path, document.file_type, document.case_id, tenant_id),
         daemon=True,
         name=f"doc-reprocessor-{document.id}"
     )

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
 import { Fullscreen, LogOut, Search, Settings, X } from 'lucide-react'
 import Image from 'next/image'
-import { getUserProfile } from '@/lib/supabase-auth'
+// Removed Supabase import - using JWT auth
 
 export default function DashboardLayout({
   children,
@@ -36,7 +36,7 @@ export default function DashboardLayout({
   }, [])
 
   useEffect(() => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000'
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001'
     let healthCheckInterval: NodeJS.Timeout | null = null
     let isMounted = true
 
@@ -225,13 +225,15 @@ export default function DashboardLayout({
       <header className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-6 flex-shrink-0">
         {/* Logo - left justified */}
         <div className="flex items-center">
-          <Image 
-            src="/logo.png" 
-            alt="Legal Discovery AI Logo" 
-            width={120} 
-            height={40}
-            className="h-10 w-auto"
-          />
+          <div className="relative h-10 w-32">
+            <Image 
+              src="/logo.png" 
+              alt="Legal Discovery AI Logo" 
+              fill
+              className="object-contain object-left"
+              priority
+            />
+          </div>
         </div>
         <div className="flex-1"></div>
         <div className="flex items-center gap-4">
@@ -296,7 +298,12 @@ export default function DashboardLayout({
           <div className="flex items-center gap-3">
             <div className="text-right">
               <p className="text-sm font-medium text-gray-900">{user?.full_name || user?.email || 'Development User'}</p>
-              <p className="text-xs text-gray-600 capitalize">{user?.title || user?.role || 'attorney'}</p>
+              <p className="text-xs text-gray-600">
+                {user?.title 
+                  ? user.title.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+                  : 'Attorney'
+                }
+              </p>
             </div>
             {user?.avatar_url && user.avatar_url.trim() !== '' ? (
               <div className="relative w-10 h-10 rounded-full">
@@ -368,4 +375,5 @@ export default function DashboardLayout({
     </div>
   )
 }
+
 

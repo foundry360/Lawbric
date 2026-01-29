@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Case } from '@/lib/api'
+import { Case, casesApi } from '@/lib/api'
 import { Plus, FileText, Calendar, LayoutGrid, List, ArrowUpDown, MoreVertical, Eye, Edit, Trash2, File, ChevronLeft, ChevronRight } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { useDashboard } from '@/lib/dashboard-context'
-import { supabase } from '@/lib/supabase'
+import { documentsApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 
 export default function WorkspacePage() {
@@ -64,14 +64,11 @@ export default function WorkspacePage() {
         // Fetch counts for all cases in parallel
         await Promise.all(
           cases.map(async (caseItem) => {
-            const { count, error } = await supabase
-              .from('documents')
-              .select('*', { count: 'exact', head: true })
-              .eq('case_id', caseItem.id)
-
-            if (!error && count !== null) {
-              counts[caseItem.id] = count
-            } else {
+            try {
+              const response = await documentsApi.list(caseItem.id)
+              counts[caseItem.id] = response.data?.length || 0
+            } catch (error) {
+              console.error(`Failed to fetch document count for case ${caseItem.id}:`, error)
               counts[caseItem.id] = 0
             }
           })
@@ -158,14 +155,7 @@ export default function WorkspacePage() {
 
     setDeletingId(String(caseToDelete.id))
     try {
-      const { error } = await supabase
-        .from('cases')
-        .delete()
-        .eq('id', caseToDelete.id)
-
-      if (error) {
-        throw error
-      }
+      await casesApi.delete(caseToDelete.id as number)
 
       // Remove from local state
       setCases(cases.filter(c => c.id !== caseToDelete.id))
@@ -174,7 +164,7 @@ export default function WorkspacePage() {
       setDeleteConfirmText('')
     } catch (err: any) {
       console.error('Failed to delete case:', err)
-      alert(`Failed to delete case: ${err.message || 'Unknown error'}`)
+      alert(`Failed to delete case: ${err.response?.data?.detail || err.message || 'Unknown error'}`)
     } finally {
       setDeletingId(null)
     }
@@ -209,36 +199,27 @@ export default function WorkspacePage() {
     }
     
     try {
-      // Create case in Supabase
-      const { data, error } = await supabase
-        .from('cases')
-        .insert({
-          name: newCaseName,
-          case_number: newCaseNumber || null,
-          description: null,
-          created_by: user.id,
-          is_active: true
-        })
-        .select()
-        .single()
+      // Create case via backend API
+      const response = await casesApi.create({
+        name: newCaseName,
+        case_number: newCaseNumber || undefined,
+        description: undefined
+      })
       
-      if (error) {
-        console.error('Failed to create case:', error)
-        throw error
+      if (response.data) {
+        // Map the created case and add to state
+        const newCase: Case = {
+          id: response.data.id,
+          name: response.data.name,
+          case_number: response.data.case_number || undefined,
+          description: response.data.description || undefined,
+          created_at: response.data.created_at,
+          updated_at: response.data.updated_at || undefined,
+          is_active: response.data.is_active !== false
+        }
+        
+        setCases([...cases, newCase])
       }
-      
-      // Map the created case and add to state
-      const newCase: Case = {
-        id: data.id,
-        name: data.name,
-        case_number: data.case_number || undefined,
-        description: data.description || undefined,
-        created_at: data.created_at,
-        updated_at: data.updated_at || undefined,
-        is_active: data.is_active !== false
-      }
-      
-      setCases([...cases, newCase])
       setShowCreateModal(false)
       setNewCaseName('')
       setNewCaseNumber('')
