@@ -10,7 +10,7 @@ export default function LoginForm() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { login } = useAuth()
+  const { login, user } = useAuth()
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -20,14 +20,15 @@ export default function LoginForm() {
 
     try {
       await login(email, password)
-      // Use replace to avoid adding to history and prevent double redirects
-      router.replace('/workspace')
+      // Redirect to home - the home page will check user role and redirect accordingly
+      // Super admin -> /admin, others -> /workspace
+      router.replace('/')
     } catch (err: any) {
       console.error('Login error:', err)
       // Show user-friendly error messages
       let errorMessage = err.message || 'Login failed'
       
-      // Handle common Supabase errors
+      // Handle common authentication errors
       if (errorMessage.includes('Email not confirmed')) {
         errorMessage = 'Please check your email and confirm your account before signing in.'
       } else if (errorMessage.includes('Invalid login')) {

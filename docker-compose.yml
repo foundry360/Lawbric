@@ -2,8 +2,6 @@ version: '3.8'
 
 # Environment variables can be loaded from .env file in project root
 # Example .env file:
-# NEXT_PUBLIC_SUPABASE_URL=https://...
-# NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 # OPENAI_API_KEY=...
 # ANTHROPIC_API_KEY=...
 
@@ -14,27 +12,23 @@ services:
       dockerfile: Dockerfile
     container_name: legalai-backend
     ports:
-      - "9000:9000"
+      - "9001:9001"
     environment:
       - ENVIRONMENT=development
-      - DATABASE_URL=sqlite:///./legalai.db
+      - DATABASE_URL=postgresql://legalai:legalai123@postgres:5432/legalai
       - VECTOR_DB_TYPE=chroma
       - UPLOAD_DIR=./uploads
       - THUMBNAIL_DIR=./thumbnails
       - VECTOR_DB_DIR=./vector_db
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - SUPABASE_URL=${SUPABASE_URL:-}
-      - SUPABASE_KEY=${SUPABASE_KEY:-}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/thumbnails:/app/thumbnails
       - ./backend/vector_db:/app/vector_db
-      - ./backend/legalai.db:/app/legalai.db
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -44,16 +38,56 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:9001
     container_name: legalai-frontend
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:9000
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+      - NEXT_PUBLIC_API_URL=http://localhost:9001
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: legalai-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-legalai}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-legalai123}
+      - POSTGRES_DB=${POSTGRES_DB:-legalai}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-legalai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: legalai-pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL:-admin@legalai.com}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-admin123}
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+
 
 

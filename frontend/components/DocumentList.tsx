@@ -5,7 +5,7 @@ import { Document, documentsApi } from '@/lib/api'
 import { FileText, CheckCircle, Clock, AlertCircle, Search } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001'
 
 const getThumbnailUrl = (document: Document): string | null => {
   if (!document.thumbnail_path) return null
@@ -116,12 +116,16 @@ interface DocumentListProps {
   documents: Document[]
   selectedDocument: Document | null
   onSelectDocument: (doc: Document) => void
+  isCollapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
 export default function DocumentList({
   documents,
   selectedDocument,
   onSelectDocument,
+  isCollapsed = false,
+  onToggleCollapse,
 }: DocumentListProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [showUploadDate, setShowUploadDate] = useState(true)
@@ -258,24 +262,36 @@ export default function DocumentList({
       <div className="flex-1 overflow-y-auto">
         {documents.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
-            <FileText className="w-12 h-12 mx-auto mb-2 text-gray-600" />
+            <FileText className="w-12 h-12 mx-auto mb-2 text-gray-400" />
             <p className="text-sm">No documents yet</p>
           </div>
         ) : filteredAndSortedDocuments.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
-            <FileText className="w-12 h-12 mx-auto mb-2 text-gray-600" />
+            <FileText className="w-12 h-12 mx-auto mb-2 text-gray-400" />
             <p className="text-sm">No documents found</p>
             <p className="text-xs text-gray-400 mt-1">Try a different search term</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-200">
-            {filteredAndSortedDocuments.map((doc) => (
+          <div className="divide-y divide-gray-200 bg-white">
+            {filteredAndSortedDocuments.map((doc) => {
+              // Normalize both IDs to strings for comparison - handle both UUID strings and numeric IDs
+              const selectedId = selectedDocument?.id != null ? String(selectedDocument.id) : null
+              const docId = doc.id != null ? String(doc.id) : null
+              const isSelected = selectedId !== null && docId !== null && selectedId === docId
+              
+              return (
               <button
-                key={doc.id}
+                key={`doc-${doc.id}`}
                 onClick={() => onSelectDocument(doc)}
-                className={`w-full text-left p-4 hover:bg-gray-200 transition-colors ${
-                  selectedDocument?.id === doc.id ? 'bg-gray-200 border-l-4 border-[#000000]' : ''
+                data-selected={isSelected}
+                className={`w-full text-left p-4 bg-white hover:bg-gray-100 transition-colors border-b border-gray-200 last:border-b-0 ${
+                  isSelected ? 'bg-gray-100' : ''
                 }`}
+                style={{
+                  borderLeftWidth: '4px',
+                  borderLeftStyle: 'solid',
+                  borderLeftColor: isSelected ? '#000000' : 'transparent'
+                }}
               >
                 <div className="flex items-start gap-3">
                   {(() => {
@@ -315,11 +331,13 @@ export default function DocumentList({
                   </div>
                 </div>
               </button>
-            ))}
+            )
+            })}
           </div>
         )}
       </div>
     </div>
   )
 }
+
 

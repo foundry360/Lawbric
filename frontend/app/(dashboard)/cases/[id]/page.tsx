@@ -6,11 +6,10 @@ import { casesApi, documentsApi, queriesApi, integrationsApi, Case, Document, Qu
 import ChatInterface from '@/components/ChatInterface'
 import DocumentViewer from '@/components/DocumentViewer'
 import DocumentList from '@/components/DocumentList'
-import MindmapViewer from '@/components/MindmapViewer'
+import CaseNotesViewer from '@/components/CaseNotesViewer'
 import GoogleDrivePicker from '@/components/GoogleDrivePicker'
 import ProcessingStatusContainer from '@/components/ProcessingStatusContainer'
-import { Upload, FileText, Share2, Loader2, AlertCircle, X, Search, ArrowLeft, Wand2 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { Upload, FileText, Share2, Loader2, AlertCircle, X, Search, ArrowLeft, Wand2, ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { useDashboard } from '@/lib/dashboard-context'
 import Image from 'next/image'
 
@@ -29,7 +28,7 @@ export default function CasePage() {
   const [loading, setLoading] = useState(true)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [activeView, setActiveView] = useState<'documents' | 'mindmap'>('documents')
+  const [activeView, setActiveView] = useState<'documents' | 'notes'>('documents')
   const [uploadTab, setUploadTab] = useState<'computer' | 'drive'>('computer')
   const [googleDriveConnected, setGoogleDriveConnected] = useState(false)
   const [selectedDriveFiles, setSelectedDriveFiles] = useState<string[]>([])
@@ -41,6 +40,9 @@ export default function CasePage() {
     document: Document | { id: string | number; status?: string; original_filename?: string; [key: string]: any }
     caseId: string | number
   }>>(new Map())
+  const [isDocumentListCollapsed, setIsDocumentListCollapsed] = useState(false)
+  const [isDocumentViewerCollapsed, setIsDocumentViewerCollapsed] = useState(false)
+  const [isChatPanelCollapsed, setIsChatPanelCollapsed] = useState(false)
   const { refreshCases } = useDashboard()
 
   useEffect(() => {
@@ -49,52 +51,38 @@ export default function CasePage() {
     loadQueries()
   }, [caseIdParam])
 
+  // Auto-select first document when documents are loaded and no document is selected
+  useEffect(() => {
+    if (documents.length > 0 && !selectedDocument && activeView === 'documents' && !loading) {
+      setSelectedDocument(documents[0])
+    }
+  }, [documents, selectedDocument, activeView, loading])
+
   const loadCaseData = async () => {
     try {
-      // If UUID, load from Supabase directly
-      if (isUuid) {
-        // Update the updated_at timestamp to mark this case as recently viewed
-        await supabase
-          .from('cases')
-          .update({ updated_at: new Date().toISOString() })
-          .eq('id', caseIdParam)
-        
-        // Load the case data
-        const { data, error } = await supabase
-          .from('cases')
-          .select('*')
-          .eq('id', caseIdParam)
-          .single()
-        
-        if (error) throw error
-        
-        if (data) {
-          setCaseData({
-            id: data.id,
-            name: data.name,
-            case_number: data.case_number || undefined,
-            description: data.description || undefined,
-            created_at: data.created_at,
-            updated_at: data.updated_at || undefined,
-            is_active: data.is_active !== false
-          })
-          
-          // Refresh the cases list in the sidebar to reflect the updated order
-          refreshCases()
-          
-          setLoading(false)
-          return
-        }
-      }
-      
-      // For numeric IDs, try backend API
-      if (!isNaN(caseId as number)) {
-        const response = await casesApi.get(caseId as number)
+      // Load case from backend API (supports both numeric and string IDs)
+      try {
+        const response = await casesApi.get(caseId as any)
         if (response.data) {
           setCaseData(response.data)
           setLoading(false)
           return
         }
+      } catch (apiError: any) {
+        // If API call fails, try as string ID
+        if (isUuid) {
+          try {
+            const response = await casesApi.get(caseIdParam as any)
+            if (response.data) {
+              setCaseData(response.data)
+              setLoading(false)
+              return
+            }
+          } catch (err) {
+            console.error('Failed to load case:', err)
+          }
+        }
+        throw apiError
       }
       
       throw new Error('Case not found')
@@ -106,89 +94,52 @@ export default function CasePage() {
 
   const loadDocuments = async () => {
     try {
-      // If UUID, load from Supabase directly
-      if (isUuid) {
-        const { data, error } = await supabase
-          .from('documents')
-          .select('*')
-          .eq('case_id', caseIdParam)
-          .order('uploaded_at', { ascending: false })
+      // Always use backend API - it now supports both UUID and integer case IDs
+      const response = await documentsApi.list(caseIdParam as any)
+      if (response.data) {
+        // Normalize document data from backend response
+        const loadedDocs = response.data.map((doc: any) => ({
+          id: doc.id,
+          case_id: doc.case_id,
+          filename: doc.filename || '',
+          original_filename: doc.original_filename || doc.filename || '',
+          file_type: doc.file_type || 'pdf',
+          file_size: doc.file_size || 0,
+          status: doc.status || 'pending',
+          uploaded_at: doc.uploaded_at || doc.created_at,
+          page_count: doc.page_count || 0,
+          word_count: doc.word_count || 0,
+          bates_number: doc.bates_number || undefined,
+          author: doc.author || undefined,
+          requires_ocr: doc.requires_ocr || false,
+          view_count: doc.view_count || 0,
+          error_message: doc.error_message || undefined,
+          metadata: doc.metadata || {}
+        }))
+        setDocuments(loadedDocs)
         
-        if (error) throw error
+        // Track processing documents - merge with existing to avoid overwriting
+        setProcessingDocuments(prev => {
+          const newMap = new Map(prev) // Start with existing map
+          loadedDocs.forEach((doc: any) => {
+            if (doc.status === 'processing' || doc.status === 'pending') {
+              // Only update if not already tracking, or update if status changed
+              newMap.set(doc.id, {
+                id: doc.id,
+                document: doc,
+                caseId: caseId
+              })
+            } else if (doc.status === 'processed' || doc.status === 'error') {
+              // Remove from tracking when done
+              newMap.delete(doc.id)
+            }
+          })
+          console.log('loadDocuments: Updated processing map, size:', newMap.size)
+          return new Map(newMap) // Force new reference
+        })
         
-        if (data) {
-          const loadedDocs = data.map(doc => ({
-            id: doc.id,
-            case_id: doc.case_id,
-            filename: doc.filename || '',
-            original_filename: doc.original_filename || doc.filename || '',
-            file_type: doc.file_type || 'pdf',
-            file_size: doc.file_size || 0,
-            status: doc.status || 'pending',
-            uploaded_at: doc.uploaded_at || doc.created_at,
-            page_count: doc.page_count || 0,
-            word_count: doc.word_count || 0,
-            bates_number: doc.bates_number || undefined,
-            author: doc.author || undefined,
-            requires_ocr: doc.requires_ocr || false,
-            view_count: doc.view_count || 0,
-            metadata: doc.metadata || {}
-          }))
-          setDocuments(loadedDocs)
-          
-          // Track processing documents - merge with existing to avoid overwriting
-          setProcessingDocuments(prev => {
-            const newMap = new Map(prev) // Start with existing map
-            loadedDocs.forEach(doc => {
-              if (doc.status === 'processing' || doc.status === 'pending') {
-                // Only update if not already tracking, or update if status changed
-                newMap.set(doc.id, {
-                  id: doc.id,
-                  document: doc,
-                  caseId: caseId
-                })
-              } else if (doc.status === 'processed' || doc.status === 'error') {
-                // Remove from tracking when done
-                newMap.delete(doc.id)
-              }
-            })
-            console.log('loadDocuments: Updated processing map, size:', newMap.size)
-            return new Map(newMap) // Force new reference
-          })
-          
-          setLoading(false)
-          return
-        }
-      }
-      
-      // For numeric IDs, try backend API
-      if (!isNaN(caseId as number)) {
-        const response = await documentsApi.list(caseId as number)
-        if (response.data) {
-          setDocuments(response.data)
-          
-          // Track processing documents - merge with existing
-          setProcessingDocuments(prev => {
-            const newMap = new Map(prev) // Start with existing map
-            response.data.forEach((doc: Document) => {
-              if (doc.status === 'processing' || doc.status === 'pending') {
-                newMap.set(doc.id, {
-                  id: doc.id,
-                  document: doc,
-                  caseId: caseId
-                })
-              } else if (doc.status === 'processed' || doc.status === 'error') {
-                // Remove from tracking when done
-                newMap.delete(doc.id)
-              }
-            })
-            console.log('loadDocuments (API): Updated processing map, size:', newMap.size)
-            return new Map(newMap) // Force new reference
-          })
-          
-          setLoading(false)
-          return
-        }
+        setLoading(false)
+        return
       }
     } catch (error: any) {
       console.error('Failed to load documents:', error)
@@ -221,25 +172,34 @@ export default function CasePage() {
     try {
       // Validate file type
       const fileExt = file.name.split('.').pop()?.toLowerCase()
-      if (!fileExt || !['pdf', 'docx', 'txt'].includes(fileExt)) {
-        alert('Invalid file type. Please upload a PDF, DOCX, or TXT file.')
+      if (!fileExt || fileExt !== 'pdf') {
+        alert('Invalid file type. Please upload a PDF file.')
         setUploading(false)
         return
       }
 
-      // For UUID cases, upload directly to Supabase
-      if (isUuid) {
-        // TODO: Implement Supabase document upload
-        console.warn('Document upload for UUID cases not yet implemented')
-        alert('Document upload for this case type is not yet available')
-      } else if (!isNaN(caseId as number)) {
+      // Upload document via backend API (supports both numeric and string IDs)
+      if (caseId) {
         await documentsApi.upload(caseId as number, file)
         loadDocuments()
         setShowUploadModal(false)
       }
     } catch (error: any) {
       console.error('Failed to upload document:', error)
-      alert(error.response?.data?.detail || 'Failed to upload document')
+      let errorMessage = 'Failed to upload document'
+      
+      if (error?.response?.data?.detail) {
+        const detail = error.response.data.detail
+        if (typeof detail === 'string') {
+          errorMessage = detail
+        } else if (typeof detail === 'object') {
+          errorMessage = JSON.stringify(detail)
+        }
+      } else if (error?.message) {
+        errorMessage = error.message
+      }
+      
+      alert(`Upload failed: ${errorMessage}`)
     } finally {
       setUploading(false)
     }
@@ -308,8 +268,10 @@ export default function CasePage() {
       const importedDocuments: any[] = []
       for (const fileId of selectedDriveFiles) {
         try {
+          // Backend expects integer case_id, so use the parsed caseId (not caseIdParam string)
+          // Since we're using PostgreSQL, all case IDs should be integers
           const response = await integrationsApi.google.importFile(
-            caseIdParam, // Use the string ID (UUID or number as string)
+            String(caseId), // Convert to string for API call, backend will parse to int
             fileId
           )
           console.log('Import response:', response)
@@ -422,7 +384,7 @@ export default function CasePage() {
         setGoogleDriveConnected(isConnected)
       } catch (error: any) {
         // Debug logging disabled
-        // If it's an auth error (401), the Supabase token might be expired, not necessarily disconnected
+        // If it's an auth error (401), the JWT token might be expired, not necessarily disconnected
         // Don't change the connection state on auth errors - let the user refresh their session
         if (error?.response?.status !== 401) {
           // For network errors or other non-auth errors, don't change state either
@@ -475,15 +437,15 @@ export default function CasePage() {
                 )}
               </button>
               <button
-                onClick={() => setActiveView('mindmap')}
+                onClick={() => setActiveView('notes')}
                 className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                  activeView === 'mindmap'
+                  activeView === 'notes'
                     ? 'text-gray-900'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                Mindmap
-                {activeView === 'mindmap' && (
+                Case Notes
+                {activeView === 'notes' && (
                   <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-black"></div>
                 )}
               </button>
@@ -514,22 +476,57 @@ export default function CasePage() {
             >
               <Wand2 className="w-5 h-5 text-gray-600" />
             </button>
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className="bg-black text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 flex items-center gap-2 text-sm"
-            >
-              <Upload className="w-4 h-4" />
-              Upload Document
-            </button>
+            {activeView === 'notes' ? (
+              <button
+                onClick={() => {
+                  // Trigger new note modal in CaseNotesViewer via custom event
+                  window.dispatchEvent(new CustomEvent('openNewNoteModal'))
+                }}
+                className="bg-black text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 flex items-center gap-2 text-sm"
+              >
+                <Plus className="w-4 h-4" />
+                New Note
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowUploadModal(true)}
+                className="bg-black text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 flex items-center gap-2 text-sm"
+              >
+                <Upload className="w-4 h-4" />
+                Upload Document
+              </button>
+            )}
           </div>
         </div>
       </div>
 
       {/* Main Content - Conditional based on activeView */}
       {activeView === 'documents' && (
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden relative">
+          {/* Chat Panel Collapse Toggle Button - On left border, positioned outside panel */}
+          {!isChatPanelCollapsed && (
+            <button
+              onClick={() => setIsChatPanelCollapsed(!isChatPanelCollapsed)}
+              className="absolute top-1/2 z-20 bg-white border border-gray-300 rounded-r-lg p-1.5 shadow-md hover:bg-gray-50 transition-all duration-300"
+              style={{ 
+                transform: 'translateY(-50%)',
+                left: '0px'
+              }}
+              title="Collapse chat panel"
+            >
+              <ChevronLeft className="w-4 h-4 text-gray-600" />
+            </button>
+          )}
+          
           {/* Left Panel - Chat */}
-          <div className="border-r border-gray-200 flex flex-col" style={{ width: '30%' }}>
+          <div 
+            className={`border-r border-gray-200 flex flex-col transition-all duration-300 ${
+              isChatPanelCollapsed ? 'w-0 overflow-hidden' : ''
+            }`}
+            style={{ 
+              width: isChatPanelCollapsed ? '0' : isDocumentViewerCollapsed ? '65%' : isDocumentListCollapsed ? '50%' : '30%' 
+            }}
+          >
             <ChatInterface
               caseId={isUuid ? 0 : (caseId as number)}
               queries={queries}
@@ -537,15 +534,47 @@ export default function CasePage() {
               selectedDocument={selectedDocument}
             />
           </div>
+          
+          {/* Chat Panel Expand Toggle Button - Show when collapsed */}
+          {isChatPanelCollapsed && (
+            <button
+              onClick={() => setIsChatPanelCollapsed(false)}
+              className="absolute top-1/2 -translate-y-1/2 left-0 z-10 bg-white border border-gray-300 rounded-r-lg p-1.5 shadow-md hover:bg-gray-50 transition-all duration-300"
+              title="Expand chat panel"
+            >
+              <ChevronRight className="w-4 h-4 text-gray-600" />
+            </button>
+          )}
 
           {/* Right Panel - Documents */}
-          <div className="flex flex-col" style={{ width: '70%' }}>
-            <div className="flex-1 overflow-hidden flex">
+          <div className="flex flex-col" style={{ 
+            width: isChatPanelCollapsed 
+              ? '100%' 
+              : isDocumentViewerCollapsed 
+                ? '35%' 
+                : isDocumentListCollapsed 
+                  ? '50%' 
+                  : '70%' 
+          }}>
+            <div className="flex-1 overflow-hidden flex relative">
               {/* Document List */}
-              <div className="border-r border-gray-200 overflow-y-auto" style={{ width: '35.71%' }}>
-                  <DocumentList
+              <div 
+                className={`border-r border-gray-200 overflow-y-auto transition-all duration-300 ${
+                  isDocumentListCollapsed ? 'w-0 overflow-hidden' : ''
+                }`}
+                style={{ width: isDocumentListCollapsed ? '0' : isDocumentViewerCollapsed ? '100%' : '35.71%' }}
+              >
+                <DocumentList
                   documents={documents}
                   selectedDocument={selectedDocument}
+                  isCollapsed={isDocumentListCollapsed}
+                  onToggleCollapse={() => {
+                    setIsDocumentListCollapsed(!isDocumentListCollapsed)
+                    // If collapsing list, expand viewer
+                    if (!isDocumentListCollapsed) {
+                      setIsDocumentViewerCollapsed(false)
+                    }
+                  }}
                   onSelectDocument={(doc) => {
                     setSelectedDocument(doc)
                     // If document is processing, add to tracking
@@ -564,8 +593,42 @@ export default function CasePage() {
                 />
               </div>
               
+              {/* Document List Collapse Toggle Button - Only show when viewer is visible */}
+              {!isDocumentViewerCollapsed && !isChatPanelCollapsed && (
+                <button
+                  onClick={() => {
+                    setIsDocumentListCollapsed(!isDocumentListCollapsed)
+                    // If collapsing list, ensure viewer is expanded
+                    if (!isDocumentListCollapsed) {
+                      setIsDocumentViewerCollapsed(false)
+                    }
+                  }}
+                  className="absolute top-1/2 -translate-y-1/2 z-10 bg-white border border-gray-300 rounded-r-lg p-1.5 shadow-md hover:bg-gray-50 transition-all duration-300"
+                  style={{ 
+                    transform: 'translateY(-50%)',
+                    left: isDocumentListCollapsed 
+                      ? '0' 
+                      : isChatPanelCollapsed 
+                        ? 'calc(50% - 1px)' 
+                        : 'calc(35.71% - 1px)'
+                  }}
+                  title={isDocumentListCollapsed ? 'Expand document list' : 'Collapse document list'}
+                >
+                  {isDocumentListCollapsed ? (
+                    <ChevronRight className="w-4 h-4 text-gray-600" />
+                  ) : (
+                    <ChevronLeft className="w-4 h-4 text-gray-600" />
+                  )}
+                </button>
+              )}
+              
               {/* Document Viewer */}
-              <div className="overflow-y-auto" style={{ width: '64.29%' }}>
+              <div 
+                className={`overflow-y-auto transition-all duration-300 ${
+                  isDocumentViewerCollapsed ? 'w-0 overflow-hidden' : ''
+                }`}
+                style={{ width: isDocumentViewerCollapsed ? '0' : isDocumentListCollapsed ? '100%' : '64.29%' }}
+              >
                 {selectedDocument ? (
                   <DocumentViewer 
                     document={selectedDocument} 
@@ -583,28 +646,41 @@ export default function CasePage() {
                   </div>
                 )}
               </div>
+              
+              {/* Document Viewer Collapse Toggle Button - Only show when list is visible */}
+              {!isDocumentListCollapsed && (
+                <button
+                  onClick={() => {
+                    setIsDocumentViewerCollapsed(!isDocumentViewerCollapsed)
+                    // If collapsing viewer, ensure list is expanded
+                    if (!isDocumentViewerCollapsed) {
+                      setIsDocumentListCollapsed(false)
+                    }
+                  }}
+                  className="absolute top-1/2 -translate-y-1/2 z-10 bg-white border border-gray-300 rounded-l-lg p-1.5 shadow-md hover:bg-gray-50 transition-all duration-300"
+                  style={{ 
+                    transform: 'translateY(-50%)',
+                    right: '0'
+                  }}
+                  title={isDocumentViewerCollapsed ? 'Expand document viewer' : 'Collapse document viewer'}
+                >
+                  {isDocumentViewerCollapsed ? (
+                    <ChevronLeft className="w-4 h-4 text-gray-600" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-gray-600" />
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {activeView === 'mindmap' && (
+      {activeView === 'notes' && (
         <div className="flex-1 overflow-hidden">
-          <MindmapViewer
+          <CaseNotesViewer
+            caseId={caseId as number}
             caseData={caseData}
-            documents={documents}
-            queries={queries}
-            onDocumentSelect={(documentId) => {
-              const doc = documents.find(d => d.id === documentId)
-              if (doc) {
-                setSelectedDocument(doc)
-                setActiveView('documents')
-              }
-            }}
-            onQuerySelect={(queryId) => {
-              // Could scroll to query in documents view if needed
-              console.log('Selected query:', queryId)
-            }}
           />
         </div>
       )}
@@ -699,12 +775,12 @@ export default function CasePage() {
                         : 'Drag and drop a file here'}
                     </p>
                     <p className="text-xs text-gray-500 mb-6">
-                      Supported formats: PDF, DOCX, and TXT files
+                      Supported formats: PDF files
                     </p>
                     <div className="relative">
                       <input
                         type="file"
-                        accept=".pdf,.docx,.txt"
+                        accept=".pdf"
                         onChange={handleFileInputChange}
                         disabled={uploading}
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"

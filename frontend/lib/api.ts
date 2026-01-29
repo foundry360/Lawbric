@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001'
 
 // Create axios instance with default config
 const api = axios.create({
@@ -8,19 +8,17 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // 30 second timeout for all requests
 })
 
 // Add auth token to requests
 api.interceptors.request.use((config) => {
   try {
-    // Get Supabase session token
+    // Get JWT token from localStorage
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (token) {
-      // Only send Supabase tokens (not dev tokens)
-      // Supabase tokens are JWT tokens, not user IDs
-      if (!token.startsWith('dev-token-') && token.length > 50) {
-        config.headers.Authorization = `Bearer ${token}`
-      }
+      // Send JWT token in Authorization header
+      config.headers.Authorization = `Bearer ${token}`
     }
   } catch (e) {
     // localStorage might not be available
@@ -28,49 +26,51 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Handle token refresh on 401 errors
+// Retry logic for network errors
+const isNetworkError = (error: any): boolean => {
+  return (
+    !error?.response &&
+    (error?.code === 'ERR_NETWORK' ||
+      error?.code === 'ECONNABORTED' ||
+      error?.code === 'ETIMEDOUT' ||
+      error?.message === 'Network Error' ||
+      error?.message?.includes('ERR_EMPTY_RESPONSE'))
+  )
+}
+
+// Handle 401 errors - redirect to login
+// Add retry logic for network errors
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config
-    
-    // If we get a 401 and haven't already tried refreshing, try to refresh the token
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true
-      
-      try {
-        // Try to refresh Supabase session
-        const { supabase } = await import('./supabase')
-        const { getSession } = await import('./supabase-auth')
-        
-        const session = await getSession()
-        if (session?.access_token) {
-          // Update token in localStorage
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('token', session.access_token)
-          }
-          
-          // Update the authorization header and retry the request
-          originalRequest.headers.Authorization = `Bearer ${session.access_token}`
-          return api(originalRequest)
+    const originalRequest = error?.config
+
+    // Retry logic for network errors (not 401/403/404)
+    if (isNetworkError(error) && originalRequest) {
+      const retryCount = originalRequest._retryCount || 0
+      if (retryCount < 3) {
+        originalRequest._retryCount = retryCount + 1
+
+        // Exponential backoff: 1s, 2s, 4s
+        const delay = Math.pow(2, originalRequest._retryCount - 1) * 1000
+        await new Promise((resolve) => setTimeout(resolve, delay))
+
+        return api(originalRequest)
+      }
+    }
+
+    // If we get a 401, token is invalid - clear it
+    if (error.response?.status === 401) {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('token')
+        // Redirect to login (root path) if we're not already there
+        const currentPath = window.location.pathname
+        if (currentPath !== '/' && currentPath !== '/login') {
+          window.location.href = '/'
         }
-      } catch (refreshError) {
-        // Token refresh failed - user needs to log in again
-        console.warn('Failed to refresh session token:', refreshError)
       }
     }
     
-    try {
-      const devBypass = typeof window !== 'undefined' && localStorage.getItem('devBypass') === 'true'
-      if (devBypass && (error.code === 'ECONNREFUSED' || error.message?.includes('Network Error') || !error.response)) {
-        // Return mock data for development
-        console.warn('Backend unavailable, using mock data')
-        // Mark error as dev bypass so components can handle it
-        error.isDevBypass = true
-      }
-    } catch (e) {
-      // localStorage might not be available
-    }
     return Promise.reject(error)
   }
 )
@@ -79,7 +79,7 @@ export default api
 
 // Types
 export interface Case {
-  id: string | number  // UUID from Supabase (string) or legacy number
+  id: string | number  // UUID (string) or numeric ID
   name: string
   case_number?: string
   description?: string
@@ -104,8 +104,12 @@ export interface Document {
   author?: string
   requires_ocr?: boolean
   uploaded_at: string
+  created_at?: string
   view_count?: number
   error_message?: string
+  extracted_text?: string
+  is_archived?: boolean
+  archived_at?: string
   metadata?: {
     custodian?: string
     document_date?: string
@@ -138,6 +142,36 @@ export interface Query {
   created_at: string
 }
 
+export interface CaseNote {
+  id: number
+  case_id: number
+  user_id: number
+  title: string
+  content: string
+  source_query_id?: number
+  note_type: string
+  privilege_tag?: string
+  is_non_authoritative: boolean
+  source_document_links?: string
+  is_archived?: boolean
+  archived_at?: string
+  created_at: string
+  updated_at?: string
+}
+
+export interface CaseNoteVersion {
+  id: number
+  note_id: number
+  version_number: number
+  title: string
+  content: string
+  privilege_tag?: string
+  is_non_authoritative: boolean
+  edited_by: number
+  change_summary?: string
+  created_at: string
+}
+
 // API functions
 export const casesApi = {
   list: () => api.get<Case[]>('/api/v1/cases'),
@@ -149,9 +183,22 @@ export const casesApi = {
   delete: (id: number) => api.delete(`/api/v1/cases/${id}`),
 }
 
+export const caseNotesApi = {
+  list: (caseId: number) => api.get<CaseNote[]>(`/api/v1/cases/${caseId}/notes`),
+  get: (caseId: number, noteId: number) => api.get<CaseNote>(`/api/v1/cases/${caseId}/notes/${noteId}`),
+  create: (caseId: number, data: { title: string; content: string; source_query_id?: number; note_type?: string; privilege_tag?: string; is_non_authoritative?: boolean; source_document_links?: string }) =>
+    api.post<CaseNote>(`/api/v1/cases/${caseId}/notes`, data),
+  update: (caseId: number, noteId: number, data: { title?: string; content?: string; privilege_tag?: string; is_non_authoritative?: boolean; source_document_links?: string; change_summary?: string }) =>
+    api.put<CaseNote>(`/api/v1/cases/${caseId}/notes/${noteId}`, data),
+  archive: (caseId: number, noteId: number) =>
+    api.post<CaseNote>(`/api/v1/cases/${caseId}/notes/${noteId}/archive`),
+  getVersions: (caseId: number, noteId: number) =>
+    api.get<CaseNoteVersion[]>(`/api/v1/cases/${caseId}/notes/${noteId}/versions`),
+}
+
 export const documentsApi = {
-  list: (caseId: number) => api.get<Document[]>(`/api/v1/documents?case_id=${caseId}`),
-  get: (id: number) => api.get<Document>(`/api/v1/documents/${id}`),
+  list: (caseId: string | number) => api.get<Document[]>(`/api/v1/documents?case_id=${caseId}`),
+  get: (id: string | number) => api.get<Document>(`/api/v1/documents/${id}`),
   upload: (caseId: number, file: File, metadata?: {
     bates_number?: string
     custodian?: string
@@ -171,7 +218,8 @@ export const documentsApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
-  delete: (id: number) => api.delete(`/api/v1/documents/${id}`),
+  delete: (id: string | number) => api.delete(`/api/v1/documents/${id}`),
+  archive: (id: string | number) => api.post<Document>(`/api/v1/documents/${id}/archive`),
 }
 
 export const queriesApi = {
@@ -182,21 +230,24 @@ export const queriesApi = {
 }
 
 export interface AppUser {
-  id: string  // UUID from Supabase
+  id: number  // User ID (integer from PostgreSQL)
   email: string
   full_name?: string
-  role: string  // user or admin (permissions)
-  title?: string  // attorney, paralegal, finance, etc. (job title)
-  avatar_url?: string  // URL to profile avatar in Supabase storage
+  role: string  // super_admin, admin, attorney, paralegal
+  title: string  // attorney, paralegal, finance, etc. (job title - required for access control)
+  avatar_url?: string  // URL to profile avatar
   is_active: boolean
+  tenant_id?: number
 }
 
 export const usersApi = {
   list: () => api.get<AppUser[]>('/api/v1/users'),
   create: (data: { email: string; password: string; full_name?: string; role: string; title: string }) =>
     api.post<AppUser>('/api/v1/users', data),
-  delete: (id: string) => api.delete(`/api/v1/users/${id}`),
-  deactivate: (id: string) => api.patch<AppUser>(`/api/v1/users/${id}/deactivate`),
+  update: (id: number, data: { full_name?: string; role?: string; title?: string; is_active?: boolean }) =>
+    api.patch<AppUser>(`/api/v1/users/${id}`, data),
+  delete: (id: number) => api.delete(`/api/v1/users/${id}`),
+  deactivate: (id: number) => api.patch<AppUser>(`/api/v1/users/${id}/deactivate`),
 }
 
 export interface GoogleDriveFile {
@@ -251,4 +302,5 @@ export const integrationsApi = {
     }),
   }
 }
+
 

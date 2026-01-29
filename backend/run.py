@@ -25,7 +25,7 @@ try:
     # #region agent log
     try:
         with open(log_path, "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:20","message":"Imports successful","data":{"host":"0.0.0.0","port":9000,"environment":settings.ENVIRONMENT},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:20","message":"Imports successful","data":{"host":"0.0.0.0","port":9001,"environment":settings.ENVIRONMENT},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
     except: pass
     # #endregion
 except ImportError as e:
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     # #region agent log
     try:
         with open(log_path, "a") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:35","message":"About to call uvicorn.run","data":{"port":9000},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"run.py:35","message":"About to call uvicorn.run","data":{"port":9001},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
     except: pass
     # #endregion
     
@@ -51,7 +51,7 @@ if __name__ == "__main__":
         uvicorn.run(
             "app.main:app",
             host="0.0.0.0",
-            port=9000,
+            port=9001,
             reload=settings.ENVIRONMENT == "development",
             log_level="info"
         )
@@ -63,6 +63,7 @@ if __name__ == "__main__":
         except: pass
         # #endregion
         raise
+
 
 
 

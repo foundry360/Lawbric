@@ -29,7 +29,7 @@
 
 ## Verify It's Working
 
-1. **Backend:** http://localhost:9000/health
+1. **Backend:** http://localhost:9001/health
    - Should show: `{"status":"ok"}`
 
 2. **Frontend:** http://localhost:3000
@@ -50,7 +50,7 @@
 ### Port already in use:
 - Stop other instances: Close the windows with the servers
 - Or change ports in:
-  - Backend: `backend/run.py` (line 51: `port=9000`)
+  - Backend: `backend/run.py` (line 51: `port=9001`)
   - Frontend: `frontend/.env.local` (set `NEXT_PUBLIC_API_URL`)
 
 ## For Production (GCP)
@@ -59,5 +59,9 @@ These scripts are for development. For production on GCP:
 - Use Cloud Run or App Engine
 - Containerize with Docker (recommended)
 - Use environment variables for configuration
+
+
+
+
 
 

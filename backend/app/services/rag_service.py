@@ -43,15 +43,17 @@ class RAGService:
         self, 
         question: str, 
         case_id: int,
+        tenant_id: int = None,
         top_k: int = 5,
         max_citations: int = 5
     ) -> Dict:
         """
-        Query the RAG system with a question
+        Query the RAG system with a question (tenant-isolated)
         
         Args:
             question: User's question
             case_id: Case ID to filter documents
+            tenant_id: Tenant ID for multi-tenant isolation
             top_k: Number of chunks to retrieve
             max_citations: Maximum number of citations to include
         
@@ -61,8 +63,14 @@ class RAGService:
         # Generate query embedding
         query_embedding = self.embedding_service.embed_text(question)
         
-        # Search vector store with case filter
-        filter_metadata = {"case_id": case_id} if settings.CASE_ISOLATION_ENABLED else None
+        # Search vector store with case and tenant filter
+        filter_metadata = {}
+        if settings.CASE_ISOLATION_ENABLED:
+            filter_metadata["case_id"] = case_id
+        if tenant_id is not None:
+            filter_metadata["tenant_id"] = tenant_id
+        
+        filter_metadata = filter_metadata if filter_metadata else None
         retrieved_chunks = self.vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k,
