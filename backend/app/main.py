@@ -47,6 +47,37 @@ async def lifespan(app: FastAPI):
         Base.metadata.create_all(bind=engine)
         logger.info("Database initialized")
         
+        # Log Google OAuth configuration status with detailed diagnostics
+        from pathlib import Path
+        import os
+        env_file_path = (Path(__file__).parent.parent / ".env").resolve()
+        has_client_id = bool(settings.GOOGLE_CLIENT_ID)
+        has_client_secret = bool(settings.GOOGLE_CLIENT_SECRET)
+        has_redirect_uri = bool(settings.GOOGLE_REDIRECT_URI)
+        logger.info(f"Google OAuth Configuration - Client ID: {'✓' if has_client_id else '✗'}, Client Secret: {'✓' if has_client_secret else '✗'}, Redirect URI: {'✓' if has_redirect_uri else '✗'}")
+        logger.info(f"Environment file path: {env_file_path}")
+        logger.info(f"Environment file exists: {env_file_path.exists()}")
+        logger.info(f"Current working directory: {os.getcwd()}")
+        if not has_client_id or not has_client_secret:
+            logger.error(f"Google OAuth is not fully configured. Expected .env at: {env_file_path}")
+            logger.error(f"Please verify GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in backend/.env file.")
+            # #region agent log
+            import json
+            from datetime import datetime
+            # Determine log path - works in both Docker and local
+            if os.path.exists("/.dockerenv") or os.environ.get("DOCKER_CONTAINER") == "true":
+                log_path = "/tmp/debug.log" if os.path.exists("/tmp") else "/app/debug.log"
+            else:
+                log_path = r"c:\LegalAI\.cursor\debug.log"
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H4","location":"main.py:lifespan","message":"Google OAuth config check at startup","data":{"has_client_id":has_client_id,"has_client_secret":has_client_secret,"env_file_path":str(env_file_path),"env_file_exists":env_file_path.exists(),"current_dir":os.getcwd(),"settings_client_id_length":len(settings.GOOGLE_CLIENT_ID) if settings.GOOGLE_CLIENT_ID else 0,"is_docker":os.path.exists("/.dockerenv")},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            except Exception as e:
+                import sys
+                print(f"DEBUG LOG ERROR in main: {e}", file=sys.stderr)
+            # #endregion
+        
         # Migration: Add title column if it doesn't exist and set default for existing users
         from app.core.database import SessionLocal
         from app.models.user import User

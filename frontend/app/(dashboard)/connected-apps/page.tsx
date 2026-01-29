@@ -49,7 +49,17 @@ export default function ConnectedAppsPage() {
       window.location.href = response.data.url
     } catch (error: any) {
       console.error('Failed to get Google Drive auth URL:', error)
-      alert(error.response?.data?.detail || 'Failed to connect to Google Drive')
+      const errorDetail = error.response?.data?.detail || 'Failed to connect to Google Drive'
+      
+      // Check if it's a configuration error
+      if (errorDetail.includes('Google OAuth not configured') || error.response?.status === 400) {
+        alert(
+          `${errorDetail}\n\n` +
+          `If you just updated the backend/.env file, please restart the backend server for the changes to take effect.`
+        )
+      } else {
+        alert(errorDetail)
+      }
     }
   }
 

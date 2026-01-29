@@ -148,10 +148,35 @@ async def get_google_authorize_url(
     user_id: int = Depends(get_current_user_id)
 ):
     """Get Google OAuth authorization URL"""
+    # #region agent log
+    import json
+    import os
+    from datetime import datetime
+    # Determine log path - works in both Docker and local
+    if os.path.exists("/.dockerenv") or os.environ.get("DOCKER_CONTAINER") == "true":
+        log_path = "/tmp/debug.log" if os.path.exists("/tmp") else "/app/debug.log"
+    else:
+        log_path = r"c:\LegalAI\.cursor\debug.log"
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H3","location":"integrations.py:150","message":"get_google_authorize_url called","data":{"user_id":user_id},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+    except Exception as e:
+        import sys
+        print(f"DEBUG LOG ERROR in integrations: {e}", file=sys.stderr)
+    # #endregion
     # Debug: Log what we have (without exposing secrets)
     has_client_id = bool(settings.GOOGLE_CLIENT_ID)
     has_client_secret = bool(settings.GOOGLE_CLIENT_SECRET)
     has_redirect_uri = bool(settings.GOOGLE_REDIRECT_URI)
+    # #region agent log
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"H3","location":"integrations.py:155","message":"Settings values accessed","data":{"has_client_id":has_client_id,"has_client_secret":has_client_secret,"has_redirect_uri":has_redirect_uri,"client_id_length":len(settings.GOOGLE_CLIENT_ID) if settings.GOOGLE_CLIENT_ID else 0,"client_secret_length":len(settings.GOOGLE_CLIENT_SECRET) if settings.GOOGLE_CLIENT_SECRET else 0,"client_id_preview":settings.GOOGLE_CLIENT_ID[:30] + "..." if settings.GOOGLE_CLIENT_ID and len(settings.GOOGLE_CLIENT_ID) > 30 else (settings.GOOGLE_CLIENT_ID if settings.GOOGLE_CLIENT_ID else "EMPTY"),"settings_object_id":id(settings)},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+    except Exception as e:
+        import sys
+        print(f"DEBUG LOG ERROR in integrations (values): {e}", file=sys.stderr)
+    # #endregion
     
     redirect_uri = settings.GOOGLE_REDIRECT_URI.strip() if settings.GOOGLE_REDIRECT_URI else ""
     
