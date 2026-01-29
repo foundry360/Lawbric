@@ -42,12 +42,45 @@ def upgrade():
     # Create a default tenant for existing data
     # We'll use a connection to insert the default tenant
     connection = op.get_bind()
-    connection.execute(
-        sa.text("""
-            INSERT INTO tenants (id, name, slug, description, is_active, created_at)
-            VALUES (1, 'Default Tenant', 'default', 'Default tenant for existing data', 1, datetime('now'))
-        """)
-    )
+    dialect_name = connection.dialect.name
+    
+    if dialect_name == 'postgresql':
+        # PostgreSQL: use NOW() and reset sequence after insert
+        connection.execute(
+            sa.text("""
+                INSERT INTO tenants (id, name, slug, description, is_active, created_at)
+                VALUES (1, 'Default Tenant', 'default', 'Default tenant for existing data', true, NOW())
+            """)
+        )
+        # Reset the PostgreSQL sequence to prevent ID conflicts
+        # Find the actual sequence name dynamically
+        seq_result = connection.execute(
+            sa.text("SELECT pg_get_serial_sequence('tenants', 'id')")
+        )
+        sequence_name = seq_result.scalar()
+        if sequence_name:
+            # Extract just the sequence name (remove schema if present)
+            if '.' in sequence_name:
+                sequence_name = sequence_name.split('.')[-1]
+            connection.execute(
+                sa.text(f"SELECT setval('{sequence_name}', (SELECT MAX(id) FROM tenants))")
+            )
+        else:
+            # Fallback: try the standard name
+            try:
+                connection.execute(
+                    sa.text("SELECT setval('tenants_id_seq', (SELECT MAX(id) FROM tenants))")
+                )
+            except Exception:
+                pass  # Sequence might not exist yet
+    else:
+        # SQLite: use datetime('now')
+        connection.execute(
+            sa.text("""
+                INSERT INTO tenants (id, name, slug, description, is_active, created_at)
+                VALUES (1, 'Default Tenant', 'default', 'Default tenant for existing data', 1, datetime('now'))
+            """)
+        )
     
     # Add tenant_id to users table
     op.add_column('users', sa.Column('tenant_id', sa.Integer(), nullable=True))
