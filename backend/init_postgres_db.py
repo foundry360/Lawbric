@@ -61,10 +61,44 @@ def init_database():
                     INSERT INTO tenants (id, name, slug, description, is_active, created_at)
                     VALUES (1, 'Default Tenant', 'default', 'Default tenant for existing data', true, NOW())
                 """))
+                # Reset the PostgreSQL sequence to prevent ID conflicts
+                # This ensures the next auto-generated ID will be 2, not 1
+                # First, find the actual sequence name
+                result = db.execute(text("SELECT pg_get_serial_sequence('tenants', 'id')"))
+                sequence_name = result.scalar()
+                if sequence_name:
+                    # Extract just the sequence name (remove schema if present)
+                    if '.' in sequence_name:
+                        sequence_name = sequence_name.split('.')[-1]
+                    db.execute(text(f"""
+                        SELECT setval('{sequence_name}', (SELECT MAX(id) FROM tenants))
+                    """))
+                else:
+                    # Fallback: try the standard name
+                    try:
+                        db.execute(text("""
+                            SELECT setval('tenants_id_seq', (SELECT MAX(id) FROM tenants))
+                        """))
+                    except Exception:
+                        pass  # Sequence might not exist yet, that's okay
                 db.commit()
                 print("[OK] Default tenant created!")
             else:
                 print("[OK] Default tenant already exists")
+                # Ensure sequence is set correctly even if tenant already exists
+                try:
+                    result = db.execute(text("SELECT pg_get_serial_sequence('tenants', 'id')"))
+                    sequence_name = result.scalar()
+                    if sequence_name:
+                        if '.' in sequence_name:
+                            sequence_name = sequence_name.split('.')[-1]
+                        db.execute(text(f"""
+                            SELECT setval('{sequence_name}', (SELECT MAX(id) FROM tenants))
+                        """))
+                        db.commit()
+                except Exception as seq_error:
+                    # Sequence might not exist yet, that's okay
+                    print(f"[INFO] Sequence check: {seq_error}")
                 
         except Exception as e:
             db.rollback()
