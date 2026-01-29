@@ -20,6 +20,9 @@ services:
       - VECTOR_DB_DIR=./vector_db
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:3000/connected-apps/callback}
     volumes:
       # Mount source code for hot reload (excludes venv, __pycache__, etc. via .dockerignore)
       - type: bind

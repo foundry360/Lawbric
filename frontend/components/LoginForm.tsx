@@ -49,15 +49,16 @@ export default function LoginForm() {
     <div className="bg-white shadow-lg rounded-lg p-8">
       <div className="text-center mb-8">
         <div className="flex justify-center mb-4">
-          <Image 
-            src="/logo.png" 
-            alt="Legal Discovery AI Logo" 
-            width={200} 
-            height={80}
-            className="h-auto w-auto max-w-full"
-            style={{ width: 'auto', height: 'auto' }}
-            priority
-          />
+          <div style={{ width: '100px', height: 'auto' }}>
+            <Image 
+              src="/logo.png" 
+              alt="Legal Discovery AI Logo" 
+              width={100} 
+              height={40}
+              style={{ width: '100%', height: 'auto', maxWidth: '100px' }}
+              priority
+            />
+          </div>
         </div>
         <p className="text-gray-600">
           AI-powered document analysis for legal professionals
