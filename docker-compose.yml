@@ -88,9 +88,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: legalai-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    # GPU support (optional - uncomment if you have NVIDIA GPU)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
 volumes:
   postgres_data:
   pgadmin_data:
+  ollama_data:
 
 
 
