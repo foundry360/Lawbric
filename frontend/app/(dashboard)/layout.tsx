@@ -225,12 +225,14 @@ export default function DashboardLayout({
       <header className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-6 flex-shrink-0">
         {/* Logo - left justified */}
         <div className="flex items-center">
-          <div className="relative h-10 w-32">
+          <div className="flex items-center">
             <Image 
               src="/logo.png" 
               alt="Legal Discovery AI Logo" 
-              fill
+              width={128}
+              height={40}
               className="object-contain object-left"
+              style={{ height: "auto" }}
               priority
             />
           </div>

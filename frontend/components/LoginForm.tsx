@@ -49,13 +49,13 @@ export default function LoginForm() {
     <div className="bg-white shadow-lg rounded-lg p-8">
       <div className="text-center mb-8">
         <div className="flex justify-center mb-4">
-          <div style={{ width: '100px', height: 'auto' }}>
+          <div className="relative w-40 h-16">
             <Image 
               src="/logo.png" 
               alt="Legal Discovery AI Logo" 
-              width={100} 
-              height={40}
-              style={{ width: '100%', height: 'auto', maxWidth: '100px' }}
+              fill
+              sizes="160px"
+              className="object-contain"
               priority
             />
           </div>

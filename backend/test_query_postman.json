@@ -1,0 +1,47 @@
+{
+  "name": "Query Panel - Test Query (Main Backend)",
+  "request": {
+    "method": "POST",
+    "header": [
+      {
+        "key": "Content-Type",
+        "value": "application/json",
+        "type": "text"
+      },
+      {
+        "key": "Authorization",
+        "value": "Bearer YOUR_JWT_TOKEN_HERE",
+        "type": "text",
+        "description": "Replace with your actual JWT token from login"
+      }
+    ],
+    "body": {
+      "mode": "raw",
+      "raw": "{\n  \"question\": \"What are the key facts mentioned in the documents?\",\n  \"case_id\": 1,\n  \"max_citations\": 5\n}",
+      "options": {
+        "raw": {
+          "language": "json"
+        }
+      }
+    },
+    "url": {
+      "raw": "http://localhost:9001/api/v1/queries",
+      "protocol": "http",
+      "host": [
+        "localhost"
+      ],
+      "port": "9001",
+      "path": [
+        "api",
+        "v1",
+        "queries"
+      ]
+    },
+    "description": "Test the Query Panel endpoint that connects to LLaMA-3.1 8B via Ollama service. This is the main backend endpoint used by the UI."
+  },
+  "response": []
+}
+
+
+
+

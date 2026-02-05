@@ -40,3 +40,6 @@ export OLLAMA_SERVICE_PORT="8001"
 # Start the service
 python ollama_service.py
 
+
+
+

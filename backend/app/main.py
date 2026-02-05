@@ -4,11 +4,14 @@ Legal Discovery AI Platform - Main FastAPI Application
 This is the entry point for the backend API server.
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 import uvicorn
+import traceback
 
 from app.core.config import settings
 from app.core.database import engine, Base
@@ -335,15 +338,73 @@ app = FastAPI(
     redoc_url="/api/redoc" if settings.ENVIRONMENT == "development" else None,
 )
 
-# CORS middleware - must be added before other middleware
+# CORS middleware - must be added before routes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
+
+# Exception handlers to ensure CORS headers are ALWAYS added, even on errors
+# Register more specific handlers first
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Ensure CORS headers on HTTP exceptions"""
+    origin = request.headers.get("origin")
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+    if origin and origin in settings.CORS_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+@app.exception_handler(HTTPException)
+async def fastapi_http_exception_handler(request: Request, exc: HTTPException):
+    """Ensure CORS headers on FastAPI HTTP exceptions"""
+    origin = request.headers.get("origin")
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+    if origin and origin in settings.CORS_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler that ensures CORS headers are always sent"""
+    # Skip HTTP exceptions - they're handled above
+    if isinstance(exc, (HTTPException, StarletteHTTPException)):
+        raise
+    
+    origin = request.headers.get("origin")
+    
+    # Log the error
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    
+    # Create error response
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "error": str(exc) if settings.ENVIRONMENT == "development" else "An error occurred"},
+    )
+    
+    # Add CORS headers if origin is allowed
+    if origin and origin in settings.CORS_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 
 
@@ -371,20 +432,28 @@ async def get_current_user(
 async def health_check():
     """Health check endpoint - verifies database connectivity"""
     try:
+        # Quick response first to ensure endpoint is working
         from app.core.database import SessionLocal
         from sqlalchemy import text
         
-        # Check database connectivity
-        db = SessionLocal()
+        # Check database connectivity with timeout protection
+        db_status = "unknown"
         try:
-            # Simple query to verify database is accessible
-            db.execute(text("SELECT 1"))
-            db_status = "connected"
-        except Exception as db_error:
-            logger.warning(f"Database health check failed: {db_error}")
-            db_status = "disconnected"
-        finally:
-            db.close()
+            db = SessionLocal()
+            try:
+                # Simple query to verify database is accessible
+                db.execute(text("SELECT 1"))
+                db.commit()
+                db_status = "connected"
+            except Exception as db_error:
+                logger.warning(f"Database health check failed: {db_error}")
+                db_status = "disconnected"
+                db.rollback()
+            finally:
+                db.close()
+        except Exception as db_init_error:
+            logger.error(f"Database session creation failed: {db_init_error}")
+            db_status = "error"
         
         if db_status == "connected":
             return {
@@ -392,22 +461,46 @@ async def health_check():
                 "service": "Legal Discovery AI Platform",
                 "database": "connected"
             }
-        else:
+        elif db_status == "disconnected":
             return {
                 "status": "degraded",
                 "service": "Legal Discovery AI Platform",
                 "database": "disconnected"
             }
+        else:
+            return {
+                "status": "error",
+                "service": "Legal Discovery AI Platform",
+                "database": db_status
+            }
     except Exception as e:
         logger.error(f"Health check error: {e}", exc_info=True)
-        return {"status": "error", "error": str(e)}
+        # Always return a response, even on error
+        return JSONResponse(
+            status_code=200,
+            content={"status": "error", "error": str(e)}
+        )
 
 
+# Exception handlers to ensure CORS headers are always sent, even on errors
+# These must be registered BEFORE routes are included
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
 
 
 if __name__ == "__main__":
+    # #region agent log
+    log_path = r"c:\LegalAI\.cursor\debug.log"
+    import os
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"server-start","hypothesisId":"H3","location":"main.py:__main__","message":"Server starting","data":{"port":9001},"timestamp":int(datetime.now().timestamp()*1000)}) + "\n")
+            f.flush()
+        logger.info("Debug logging initialized - log file created")
+    except Exception as e:
+        logger.error(f"Failed to write startup log: {e}")
+    # #endregion
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",

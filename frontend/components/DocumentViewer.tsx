@@ -2,18 +2,22 @@
 
 import { useState, useEffect } from 'react'
 import { Document, documentsApi } from '@/lib/api'
-import { FileText, Calendar, User, Hash, MoreVertical, X, Eye, AlertCircle, Loader2, ZoomIn, ZoomOut, Download, Printer, Maximize2, Minimize2 } from 'lucide-react'
+import { FileText, Calendar, User, Hash, MoreVertical, X, Eye, AlertCircle, Loader2, ZoomIn, ZoomOut, Download, Printer, Maximize2, Minimize2, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { format } from 'date-fns'
 import AdobePDFViewer from './AdobePDFViewer'
 
 interface DocumentViewerProps {
   document: Document | { id: string | number; [key: string]: any } // Support both UUID and integer IDs
   onDocumentDeleted?: () => void
+  isCollapsed?: boolean
+  onToggleCollapse?: () => void
+  documentListCollapsed?: boolean
+  onToggleDocumentList?: () => void
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001'
 
-export default function DocumentViewer({ document, onDocumentDeleted }: DocumentViewerProps) {
+export default function DocumentViewer({ document, onDocumentDeleted, isCollapsed, onToggleCollapse, documentListCollapsed, onToggleDocumentList }: DocumentViewerProps) {
   const [showMenu, setShowMenu] = useState(false)
   const [showArchiveModal, setShowArchiveModal] = useState(false)
   const [archiveConfirmText, setArchiveConfirmText] = useState('')
@@ -433,7 +437,20 @@ export default function DocumentViewer({ document, onDocumentDeleted }: Document
           </div>
           
           {/* Document Content */}
-          <div className="overflow-auto bg-white w-full flex-1" style={{ minHeight: 0 }}>
+          <div 
+            className="overflow-auto bg-white w-full flex-1 document-viewer-scroll" 
+            style={{ minHeight: 0 }}
+            ref={(el) => {
+              // #region agent log
+              if (el) {
+                const hasClass = el.classList.contains('document-viewer-scroll');
+                const computedStyle = window.getComputedStyle(el);
+                const scrollbarWidth = computedStyle.getPropertyValue('scrollbar-width') || 'not-set';
+                fetch('http://127.0.0.1:7242/ingest/5a0998ac-8afa-45a8-961d-0dd6f96371b5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:436',message:'Document viewer scroll container mounted',data:{hasClass,scrollbarWidth,className:el.className,overflow:computedStyle.overflow},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+              }
+              // #endregion
+            }}
+          >
             <div className="p-6 w-full">
               <div className="w-full">
                 <pre 
@@ -465,65 +482,84 @@ export default function DocumentViewer({ document, onDocumentDeleted }: Document
   }
 
   return (
-    <div className="h-full bg-white p-6 flex flex-col w-full">
+    <div className="h-full bg-white flex flex-col w-full">
       <div className="flex-1 flex flex-col min-w-0 w-full">
         {/* Document Header */}
-        <div className="border-b border-gray-200 pb-4 mb-6 flex-shrink-0 w-full">
-          <div className="flex items-start gap-4">
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-base font-bold text-gray-900">
-                  {document.original_filename}
-                </h2>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowMenu(!showMenu)}
-                    className="p-1 hover:bg-gray-200 rounded transition-colors"
-                  >
-                    <MoreVertical className="w-5 h-5 text-gray-600" />
-                  </button>
-                  {showMenu && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-40"
-                        onClick={() => setShowMenu(false)}
-                      />
-                      <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                        <div className="py-1">
-                          <button
-                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            onClick={() => {
-                              setShowMenu(false)
-                              setShowArchiveModal(true)
-                            }}
-                          >
-                            Archive Document
-                          </button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-4 text-xs text-gray-600 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-3 h-3" />
-                  <span>{document.file_type.toUpperCase()}</span>
-                </div>
-                {document.page_count && (
-                  <div className="flex items-center gap-2">
-                    <span>{document.page_count} pages</span>
+        <div className="px-4 py-3 bg-white flex items-center justify-between h-[52px] flex-shrink-0">
+          <div className="flex items-center gap-2">
+            {/* Show Document List expand button if Document List is collapsed, otherwise show Viewer collapse button if Viewer is open */}
+            {documentListCollapsed && onToggleDocumentList ? (
+              <button
+                onClick={onToggleDocumentList}
+                className="p-1 hover:bg-gray-200 rounded transition-colors"
+                title="Show document list"
+              >
+                <ChevronsLeft className="w-4 h-4 text-gray-600" />
+              </button>
+            ) : (
+              onToggleCollapse && !isCollapsed && (
+                <button
+                  onClick={onToggleCollapse}
+                  className="p-1 hover:bg-gray-200 rounded transition-colors"
+                  title="Hide document viewer"
+                >
+                  <ChevronsRight className="w-4 h-4 text-gray-600" />
+                </button>
+              )
+            )}
+            <h2 className="text-base font-bold text-gray-900 leading-none">
+              {document.original_filename}
+            </h2>
+          </div>
+          <div className="relative">
+            <button
+              onClick={() => setShowMenu(!showMenu)}
+              className="p-1 hover:bg-gray-200 rounded transition-colors"
+            >
+              <MoreVertical className="w-5 h-5 text-gray-600" />
+            </button>
+            {showMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowMenu(false)}
+                />
+                <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                  <div className="py-1">
+                    <button
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      onClick={() => {
+                        setShowMenu(false)
+                        setShowArchiveModal(true)
+                      }}
+                    >
+                      Archive Document
+                    </button>
                   </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-3 h-3" />
-                  <span>Uploaded {format(new Date(document.uploaded_at), 'MMM d, yyyy')}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Eye className="w-3 h-3" />
-                  <span>{document.view_count || 0} views</span>
-                </div>
+              </>
+            )}
+          </div>
+        </div>
+        {/* Document Metadata Bar */}
+        <div className="px-4 py-2 bg-white flex-shrink-0">
+          <div className="flex items-center gap-4 text-xs text-gray-600 flex-wrap">
+            <div className="flex items-center gap-2">
+              <FileText className="w-3 h-3" />
+              <span>{document.file_type.toUpperCase()}</span>
+            </div>
+            {document.page_count && (
+              <div className="flex items-center gap-2">
+                <span>{document.page_count} pages</span>
               </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Calendar className="w-3 h-3" />
+              <span>Uploaded {format(new Date(document.uploaded_at), 'MMM d, yyyy')}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Eye className="w-3 h-3" />
+              <span>{document.view_count || 0} views</span>
             </div>
           </div>
         </div>

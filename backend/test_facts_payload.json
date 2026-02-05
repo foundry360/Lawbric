@@ -1,0 +1,29 @@
+{
+  "prompt": "Analyze for contradictions",
+  "facts": [
+    {
+      "document_name": "Deposition Transcript",
+      "page": 5,
+      "text": "The incident occurred on March 15th at 3:00 PM."
+    },
+    {
+      "document_name": "Email Correspondence",
+      "page": 2,
+      "text": "The incident occurred on March 16th at 2:00 PM."
+    },
+    {
+      "document_name": "Police Report",
+      "page": 1,
+      "text": "The witness stated they were not present at the scene."
+    },
+    {
+      "document_name": "Deposition Transcript",
+      "page": 10,
+      "text": "The witness confirmed they were present at the scene."
+    }
+  ]
+}
+
+
+
+

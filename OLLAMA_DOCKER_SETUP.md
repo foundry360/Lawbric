@@ -216,3 +216,6 @@ docker exec legalai-ollama ollama list
 
 See `OLLAMA_SETUP.md` for frontend integration instructions.
 
+
+
+

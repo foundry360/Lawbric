@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Document, documentsApi } from '@/lib/api'
-import { FileText, CheckCircle, Clock, AlertCircle, Search } from 'lucide-react'
+import { FileText, CheckCircle, Clock, AlertCircle, Search, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001'
@@ -118,6 +118,10 @@ interface DocumentListProps {
   onSelectDocument: (doc: Document) => void
   isCollapsed?: boolean
   onToggleCollapse?: () => void
+  chatPanelCollapsed?: boolean
+  onToggleChatPanel?: () => void
+  documentViewerCollapsed?: boolean
+  onToggleDocumentViewer?: () => void
 }
 
 export default function DocumentList({
@@ -126,6 +130,10 @@ export default function DocumentList({
   onSelectDocument,
   isCollapsed = false,
   onToggleCollapse,
+  chatPanelCollapsed,
+  onToggleChatPanel,
+  documentViewerCollapsed,
+  onToggleDocumentViewer,
 }: DocumentListProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [showUploadDate, setShowUploadDate] = useState(true)
@@ -234,14 +242,46 @@ export default function DocumentList({
   return (
     <div ref={containerRef} className="h-full bg-gray-50 flex flex-col">
       {/* Documents Header */}
-      <div className="px-4 py-3 border-b border-gray-200 bg-white">
-        <h3 className="text-sm font-semibold text-gray-900">Documents</h3>
-        <p className="text-xs text-gray-600">
-          {searchQuery.trim() 
-            ? `${filteredAndSortedDocuments.length} of ${documents.length} files`
-            : `${documents.length} files`
-          }
-        </p>
+      <div className="px-4 py-3 bg-white flex items-center justify-between h-[52px]">
+        <div className="flex items-center gap-2">
+          {/* Priority: Chat expand > Document Viewer expand > Documents collapse */}
+          {chatPanelCollapsed && onToggleChatPanel ? (
+            <button
+              onClick={onToggleChatPanel}
+              className="p-1 hover:bg-gray-200 rounded transition-colors"
+              title="Show chat panel"
+            >
+              <ChevronsRight className="w-4 h-4 text-gray-600" />
+            </button>
+          ) : documentViewerCollapsed && onToggleDocumentViewer ? (
+            <button
+              onClick={onToggleDocumentViewer}
+              className="p-1 hover:bg-gray-200 rounded transition-colors"
+              title="Show document viewer"
+            >
+              <ChevronsLeft className="w-4 h-4 text-gray-600" />
+            </button>
+          ) : (
+            onToggleCollapse && !isCollapsed && (
+              <button
+                onClick={onToggleCollapse}
+                className="p-1 hover:bg-gray-200 rounded transition-colors"
+                title="Hide document list"
+              >
+                <ChevronsRight className="w-4 h-4 text-gray-600" />
+              </button>
+            )
+          )}
+          <h3 className="text-base font-bold text-gray-900 leading-none">
+            Documents
+            <span className="ml-2 text-sm font-normal text-gray-600">
+              {searchQuery.trim() 
+                ? `${filteredAndSortedDocuments.length} of ${documents.length} files`
+                : `${documents.length} files`
+              }
+            </span>
+          </h3>
+        </div>
       </div>
       
       {/* Search Box */}
@@ -259,7 +299,7 @@ export default function DocumentList({
       </div>
       
       {/* Documents List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto chat-messages-scroll">
         {documents.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
             <FileText className="w-12 h-12 mx-auto mb-2 text-gray-400" />
@@ -288,9 +328,9 @@ export default function DocumentList({
                   isSelected ? 'bg-gray-100' : ''
                 }`}
                 style={{
-                  borderLeftWidth: '4px',
-                  borderLeftStyle: 'solid',
-                  borderLeftColor: isSelected ? '#000000' : 'transparent'
+                  borderTopWidth: isSelected ? '4px' : '0px',
+                  borderTopStyle: 'solid',
+                  borderTopColor: isSelected ? '#000000' : 'transparent'
                 }}
               >
                 <div className="flex items-start gap-3">

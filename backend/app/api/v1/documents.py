@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 import threading
 import traceback
+import time
 
 from app.core.database import get_db, SessionLocal
 from app.core.config import settings
@@ -158,14 +159,12 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
                 except (IOError, OSError) as e:
                     if attempt < max_retries - 1:
                         logger.warning(f"File {file_path} not readable on attempt {attempt + 1}, retrying...")
-                        import time
                         time.sleep(retry_delay)
                     else:
                         raise FileNotFoundError(f"Document file exists but is not readable after {max_retries} attempts: {file_path}")
             else:
                 if attempt < max_retries - 1:
                     logger.warning(f"File {file_path} not found on attempt {attempt + 1}, retrying...")
-                    import time
                     time.sleep(retry_delay)
                 else:
                     raise FileNotFoundError(f"Document file not found after {max_retries} attempts: {file_path}")
@@ -285,20 +284,55 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
         # Step 2: Chunk text with page mapping
         logger.info(f"Chunking text for document {document_id}")
         # Build page mapping from processed pages for better page number tracking
+        # The full text is built by concatenating pages with "\n\n" separators
+        # NOTE: The text may have been .strip()'d, so we need to use the actual text structure
         page_mapping = []
+        actual_text = processed.get("text", "")
+        
         if processed.get("pages"):
+            # Reconstruct the text exactly as it was built (with \n\n separators)
+            # This matches how chunk_text will process it
+            full_text_from_pages = "\n\n".join([p.get("text", "") for p in processed["pages"]])
+            
+            # The processed text might be stripped, so we need to account for that
+            # Use the reconstructed text for mapping, but chunk the actual text
+            # However, if they differ significantly, we need to adjust
+            text_for_mapping = full_text_from_pages  # Use this for page mapping
+            
+            # Log if there's a significant mismatch
+            if abs(len(full_text_from_pages) - len(actual_text)) > 10:  # Allow small differences from stripping
+                logger.warning(f"Text length mismatch for document {document_id}. Reconstructed: {len(full_text_from_pages)}, actual: {len(actual_text)}. Using reconstructed for mapping.")
+            
             current_char = 0
             for page_info in processed["pages"]:
                 page_num = page_info.get("page_number", 1)
                 page_text = page_info.get("text", "")
                 page_start = current_char
                 page_end = current_char + len(page_text)
+                
+                # Validate page number doesn't exceed document page count
+                if document.page_count and page_num > document.page_count:
+                    logger.warning(f"Page number {page_num} exceeds document page count {document.page_count} for document {document_id}. Capping to {document.page_count}.")
+                    page_num = document.page_count
+                
                 page_mapping.append({
                     "page": page_num,
                     "start": page_start,
-                    "end": page_end
+                    "end": page_end  # End is exclusive, doesn't include separator
                 })
+                
+                # Move to next page: current page text + "\n\n" separator
                 current_char = page_end + 2  # +2 for \n\n separator
+                
+                logger.debug(f"Page {page_num} mapping: start={page_start}, end={page_end}, text_length={len(page_text)}")
+            
+            logger.info(f"Built page mapping for {len(page_mapping)} pages. Document has {document.page_count} pages. Text length: {len(actual_text)}")
+            
+            # Validate page mapping makes sense
+            if page_mapping:
+                max_mapped_page = max(p["page"] for p in page_mapping)
+                if max_mapped_page > document.page_count:
+                    logger.error(f"Page mapping has page {max_mapped_page} but document only has {document.page_count} pages!")
         
         chunks = processor.chunk_text(
             processed["text"],
@@ -318,12 +352,22 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
         chunk_ids_list = []  # Store (chunk_id, embedding_id) pairs for updating embedding_id
         
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            # Validate and cap page number at document page count
+            chunk_page_num = chunk.get("page_number")
+            if chunk_page_num is not None and document.page_count:
+                if chunk_page_num > document.page_count:
+                    logger.warning(f"Chunk {chunk['chunk_index']} has page number {chunk_page_num} but document only has {document.page_count} pages. Capping to {document.page_count}.")
+                    chunk_page_num = document.page_count
+                elif chunk_page_num < 1:
+                    logger.warning(f"Chunk {chunk['chunk_index']} has invalid page number {chunk_page_num}. Setting to 1.")
+                    chunk_page_num = 1
+            
             # Save chunk to database
             db_chunk = DocumentChunk(
                 document_id=document.id,
                 chunk_index=chunk["chunk_index"],
                 content=chunk["content"],
-                page_number=chunk.get("page_number"),
+                page_number=chunk_page_num,
                 start_char=chunk["start_char"],
                 end_char=chunk["end_char"]
             )
@@ -343,9 +387,9 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
                 "case_id": case_id,
                 "chunk_index": chunk["chunk_index"]
             }
-            # Only add optional fields if they are not None
-            if chunk.get("page_number") is not None:
-                metadata["page_number"] = chunk.get("page_number")
+            # Only add optional fields if they are not None (use validated page_number)
+            if chunk_page_num is not None:
+                metadata["page_number"] = chunk_page_num
             if chunk.get("paragraph_number") is not None:
                 metadata["paragraph_number"] = chunk.get("paragraph_number")
             # Add tenant_id for multi-tenant isolation
@@ -359,6 +403,37 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
         logger.info(f"Storing embeddings in vector store for document {document_id}")
         chunk_docs = [{"content": chunk["content"]} for chunk in chunks]
         vector_store.add_documents(chunk_docs, embeddings, chunk_metadata_list)
+        
+        # Verify chunks were actually added to vector store
+        logger.info(f"Verifying chunks were added to vector store for document {document_id}")
+        verification_filter = {"document_id": document.id}
+        if tenant_id is not None:
+            verification_filter["tenant_id"] = tenant_id
+        
+        # Use a test query to verify chunks exist
+        test_embedding = embeddings[0] if embeddings else None
+        if test_embedding:
+            verification_results = vector_store.search(
+                query_embedding=test_embedding,
+                top_k=1,
+                filter_metadata=verification_filter
+            )
+            if not verification_results:
+                # Try without document_id filter to see if chunks exist at all
+                logger.warning(f"No chunks found in vector store for document {document_id} with filter {verification_filter}")
+                all_results = vector_store.search(
+                    query_embedding=test_embedding,
+                    top_k=5,
+                    filter_metadata=None
+                )
+                logger.warning(f"Total chunks in vector store: {len(all_results)}")
+                if all_results:
+                    logger.warning(f"Sample chunk metadata: {all_results[0].get('metadata', {})}")
+                raise RuntimeError(f"Chunks were not successfully added to vector store for document {document_id}")
+            else:
+                logger.info(f"Verified {len(verification_results)} chunk(s) in vector store for document {document_id}")
+        else:
+            logger.warning(f"No embeddings generated for document {document_id}, skipping verification")
         
         # Step 6: Update embedding_id in DocumentChunk records
         logger.info(f"Updating embedding_id references for document {document_id}")
@@ -375,7 +450,7 @@ def process_document_background(document_id: int, file_path: str, file_ext: str,
         # thumbnail_path was already saved in Step 0, so no need to set it again
         db.commit()
         
-        logger.info(f"Document {document_id} processed successfully")
+        logger.info(f"Document {document_id} processed successfully with {len(chunks)} chunks")
         
     except Exception as e:
         # #region agent log
@@ -1130,6 +1205,84 @@ async def archive_document(
     
     logger.info(f"Document archived: {document_id} by user {user_id}")
     return document
+
+
+@router.get("/{document_id}/diagnostics")
+async def get_document_diagnostics(
+    document_id: int,
+    db: Session = Depends(get_db),
+    user_tenant: Tuple[int, int] = Depends(get_current_user_and_tenant)
+):
+    """Get diagnostic information about document processing status"""
+    user_id, tenant_id = user_tenant
+    
+    # Get document
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Verify document's case belongs to tenant
+    case = db.query(Case).filter(
+        Case.id == document.case_id,
+        Case.tenant_id == tenant_id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Count chunks in database
+    chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).count()
+    
+    # Check vector store
+    vector_store_chunks = 0
+    vector_store_sample_metadata = None
+    try:
+        from app.services.vector_store import VectorStore
+        from app.services.embedding_service import EmbeddingService
+        
+        vector_store = VectorStore()
+        embedding_service = EmbeddingService()
+        
+        # Count total chunks in vector store
+        total_count = vector_store.collection.count() if hasattr(vector_store, 'collection') else 0
+        
+        # Try to find chunks for this document
+        if chunk_count > 0 and total_count > 0:
+            # Get a sample chunk to create a test embedding
+            sample_chunk = db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).first()
+            if sample_chunk and document.extracted_text:
+                # Use document text to create embedding
+                test_text = document.extracted_text[:100] if len(document.extracted_text) > 100 else document.extracted_text
+                test_embedding = embedding_service.embed_text(test_text)
+                
+                # Search for chunks with document_id filter
+                filter_metadata = {"document_id": document_id}
+                if tenant_id is not None:
+                    filter_metadata["tenant_id"] = tenant_id
+                
+                results = vector_store.search(
+                    query_embedding=test_embedding,
+                    top_k=10,
+                    filter_metadata=filter_metadata
+                )
+                vector_store_chunks = len(results)
+                if results:
+                    vector_store_sample_metadata = results[0].get('metadata', {})
+    except Exception as e:
+        logger.error(f"Error checking vector store: {e}", exc_info=True)
+    
+    return {
+        "document_id": document_id,
+        "status": document.status,
+        "error_message": document.error_message,
+        "processed_at": document.processed_at.isoformat() if document.processed_at else None,
+        "chunks_in_database": chunk_count,
+        "chunks_in_vector_store": vector_store_chunks,
+        "total_chunks_in_vector_store": total_count if 'total_count' in locals() else 0,
+        "sample_metadata": vector_store_sample_metadata,
+        "file_exists": os.path.exists(document.file_path) if document.file_path else False,
+        "has_extracted_text": bool(document.extracted_text),
+        "extracted_text_length": len(document.extracted_text) if document.extracted_text else 0
+    }
 
 
 @router.post("/{document_id}/reprocess", response_model=DocumentResponse)

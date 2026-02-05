@@ -25,6 +25,7 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:3000/connected-apps/callback}
+      # OLLAMA_URL removed - using Claude only
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/thumbnails:/app/thumbnails
@@ -88,27 +89,36 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: legalai-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    restart: unless-stopped
-    # GPU support (optional - uncomment if you have NVIDIA GPU)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+  # Ollama/LLaMA services disabled - using Claude only
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: legalai-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   restart: unless-stopped
+
+  # ollama-service:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile.ollama-service
+  #   container_name: legalai-ollama-service
+  #   ports:
+  #     - "8002:8002"
+  #   environment:
+  #     - OLLAMA_SERVICE_PORT=8002
+  #     - OLLAMA_BASE_URL=http://ollama:11434
+  #     - OLLAMA_MODEL=llama3.1:8b
+  #   depends_on:
+  #     - ollama
+  #   restart: unless-stopped
+  #   command: python ollama_service.py
 
 volumes:
   postgres_data:
   pgadmin_data:
-  ollama_data:
+  # ollama_data:  # Disabled - using Claude only
 
 
 

@@ -14,7 +14,7 @@ import { useState } from 'react'
 
 // Example 1: Simple fetch function
 async function queryOllama(prompt: string): Promise<string> {
-  const response = await fetch('http://localhost:8001/query', {
+  const response = await fetch('http://localhost:8002/query', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

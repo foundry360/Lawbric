@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
     
     # Database
     DATABASE_URL: str = "sqlite:///./legalai.db"
@@ -56,11 +56,11 @@ class Settings(BaseSettings):
     WEAVIATE_API_KEY: str = ""
     
     # LLM Provider
-    LLM_PROVIDER: str = "openai"  # Options: openai, anthropic
+    LLM_PROVIDER: str = "anthropic"  # Options: openai, anthropic (Claude only)
     OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4-turbo-preview"
+    OPENAI_MODEL: str = "gpt-4o"  # Disabled - using Claude only
     ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_MODEL: str = "claude-3-opus-20240229"
+    ANTHROPIC_MODEL: str = "claude-3-haiku-20240307"  # Claude 3 Haiku (works with current API key)
     
     # OCR
     OCR_PROVIDER: str = "tesseract"
@@ -104,6 +104,7 @@ class Settings(BaseSettings):
         env_file=str((Path(__file__).parent.parent.parent / ".env").resolve()),
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",  # Ignore extra fields from .env file (prevents validation errors)
         # Environment variables take precedence over .env file (good for Docker)
         # Reload .env file on each access (for development)
         # In production, settings are loaded once at startup
