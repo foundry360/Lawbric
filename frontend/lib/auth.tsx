@@ -102,11 +102,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     for (let i = 0; i < maxRetries; i++) {
       try {
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 8000)
+        const timeoutId = setTimeout(() => controller.abort(), 5000) // Reduced timeout
         
         const response = await fetch(`${API_URL}/health`, {
           method: 'GET',
           signal: controller.signal,
+          cache: 'no-cache',
+          headers: {
+            'Accept': 'application/json',
+          }
         })
         
         clearTimeout(timeoutId)
@@ -118,9 +122,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return true
           }
         }
-      } catch (error) {
-        // Continue to next retry
-        console.log(`Health check attempt ${i + 1}/${maxRetries} failed, retrying...`)
+      } catch (error: any) {
+        // Log specific error types for debugging
+        if (error.name === 'AbortError') {
+          console.log(`Health check attempt ${i + 1}/${maxRetries} timed out, retrying...`)
+        } else if (error.message?.includes('ERR_EMPTY_RESPONSE') || error.message?.includes('Connection closed')) {
+          console.log(`Health check attempt ${i + 1}/${maxRetries} failed: Backend connection closed. The backend may need to be restarted.`)
+        } else {
+          console.log(`Health check attempt ${i + 1}/${maxRetries} failed: ${error.message || error}`)
+        }
       }
       
       if (i < maxRetries - 1) {

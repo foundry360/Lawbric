@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install minimal system dependencies
+# Note: NVIDIA libraries are mounted from WSL2 via volume mount, not installed here
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only ollama service requirements
+COPY ollama_requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy only the ollama service file
+COPY ollama_service.py .
+
+# Expose port
+EXPOSE 8002
+
+# Run the ollama service
+CMD ["python", "ollama_service.py"]
+

@@ -5,4 +5,7 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 httpx>=0.24.0,<0.25.0
+# GPU detection libraries (optional - will gracefully degrade if not available)
+torch>=2.0.0
+pynvml>=11.5.0
 

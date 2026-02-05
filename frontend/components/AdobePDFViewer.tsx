@@ -63,6 +63,21 @@ export default function AdobePDFViewer({ pdfUrl, fileName }: AdobePDFViewerProps
 
       adobeDCViewRef.current = adobeDCView
 
+      // Suppress Adobe viewer console errors by catching and ignoring feature flag errors
+      const originalConsoleError = console.error
+      const suppressedErrors = [
+        'No callback registered by viewer for GET_FEATURE_FLAG',
+        'violates the following Content Security Policy',
+        'was preloaded using link preload but not used'
+      ]
+      
+      console.error = (...args: any[]) => {
+        const message = args.join(' ')
+        if (!suppressedErrors.some(err => message.includes(err))) {
+          originalConsoleError.apply(console, args)
+        }
+      }
+      
       adobeDCView.previewFile(
         {
           content: {
@@ -86,6 +101,8 @@ export default function AdobePDFViewer({ pdfUrl, fileName }: AdobePDFViewerProps
           enableLinearization: false,
         }
       ).then((adobeViewer: any) => {
+        // Restore original console.error
+        console.error = originalConsoleError
         // Set view mode to fit width after rendering (in case defaultViewMode doesn't work)
         setTimeout(() => {
           try {
@@ -163,6 +180,35 @@ export default function AdobePDFViewer({ pdfUrl, fileName }: AdobePDFViewerProps
                 #${viewerId} button[aria-label*="select"]:hover {
                   background-color: #f3f4f6 !important;
                 }
+                
+                /* Custom scrollbar styling to match other components */
+                #${viewerId},
+                #${viewerId} * {
+                  scrollbar-width: thin !important;
+                  scrollbar-color: #d1d5db transparent !important;
+                }
+                
+                #${viewerId}::-webkit-scrollbar,
+                #${viewerId} *::-webkit-scrollbar {
+                  width: 6px !important;
+                  height: 6px !important;
+                }
+                
+                #${viewerId}::-webkit-scrollbar-track,
+                #${viewerId} *::-webkit-scrollbar-track {
+                  background: transparent !important;
+                }
+                
+                #${viewerId}::-webkit-scrollbar-thumb,
+                #${viewerId} *::-webkit-scrollbar-thumb {
+                  background-color: #d1d5db !important;
+                  border-radius: 3px !important;
+                }
+                
+                #${viewerId}::-webkit-scrollbar-thumb:hover,
+                #${viewerId} *::-webkit-scrollbar-thumb:hover {
+                  background-color: #9ca3af !important;
+                }
               `
             }
           } catch (e) {
@@ -170,9 +216,15 @@ export default function AdobePDFViewer({ pdfUrl, fileName }: AdobePDFViewerProps
           }
         }, 1500) // Increased timeout to allow viewer to fully render
       }).catch((error: any) => {
+        // Restore original console.error before logging real errors
+        console.error = originalConsoleError
         console.error('Error previewing PDF:', error)
       })
     } catch (error) {
+      // Restore original console.error before logging real errors
+      if (typeof originalConsoleError !== 'undefined') {
+        console.error = originalConsoleError
+      }
       console.error('Error initializing Adobe PDF viewer:', error)
     }
 
@@ -194,11 +246,11 @@ export default function AdobePDFViewer({ pdfUrl, fileName }: AdobePDFViewerProps
   if (!pdfUrl) return null
 
   return (
-    <div className="w-full h-full flex flex-col rounded-lg overflow-hidden bg-white">
+    <div className="w-full h-full flex flex-col rounded-lg overflow-hidden bg-white document-viewer-scroll">
       <div
         id={viewerId}
         ref={containerRef}
-        className="w-full flex-1"
+        className="w-full flex-1 document-viewer-scroll"
         style={{ 
           backgroundColor: '#ffffff', 
           minHeight: 0,

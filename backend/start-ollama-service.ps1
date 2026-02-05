@@ -29,14 +29,14 @@ if ($models) {
 }
 
 Write-Host ""
-Write-Host "Starting Ollama Service on http://localhost:8001" -ForegroundColor Green
+Write-Host "Starting Ollama Service on http://localhost:8002" -ForegroundColor Green
 Write-Host "Press Ctrl+C to stop" -ForegroundColor Yellow
 Write-Host ""
 
 # Set environment variables (optional - defaults are already set in the script)
 $env:OLLAMA_BASE_URL = "http://localhost:11434"
 $env:OLLAMA_MODEL = "llama3:8b"
-$env:OLLAMA_SERVICE_PORT = "8001"
+$env:OLLAMA_SERVICE_PORT = "8002"
 
 # Start the service
 python ollama_service.py

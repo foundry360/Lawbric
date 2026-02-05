@@ -8,7 +8,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // 30 second timeout for all requests
+  timeout: 300000, // 5 minute timeout for all requests (LLM queries can take time)
 })
 
 // Add auth token to requests
@@ -223,10 +223,50 @@ export const documentsApi = {
 }
 
 export const queriesApi = {
-  create: (data: { question: string; case_id: number; query_type?: string; max_citations?: number }) =>
-    api.post<Query>('/api/v1/queries', data),
+  create: (data: { question: string; case_id: number; query_type?: string; max_citations?: number; document_id?: number }) =>
+    api.post<Query>('/api/v1/queries', data, { timeout: 300000 }), // 5 minute timeout for LLM queries
   list: (caseId: number) => api.get<Query[]>(`/api/v1/queries?case_id=${caseId}`),
   get: (id: number) => api.get<Query>(`/api/v1/queries/${id}`),
+  delete: (id: number) => api.delete(`/api/v1/queries/${id}`), // Delete a single query
+  deleteAll: (caseId: number) => api.delete(`/api/v1/queries?case_id=${caseId}`), // Delete all queries for a case
+}
+
+// Ollama LLaMA-3.1 8B Query API
+const OLLAMA_API_URL = process.env.NEXT_PUBLIC_OLLAMA_URL || 'http://localhost:8002'
+
+export interface OllamaQueryRequest {
+  prompt: string
+  documents?: Array<{
+    document_name: string
+    text: string
+    page?: number
+  }>
+  facts?: Array<{
+    document_name: string
+    page: number
+    text: string
+  }>
+}
+
+export interface OllamaQueryResponse {
+  response: string
+  documents: null | Record<string, string>
+}
+
+export const ollamaApi = {
+  query: async (data: OllamaQueryRequest): Promise<OllamaQueryResponse> => {
+    // Create a separate axios instance for Ollama service (no auth token needed)
+    const ollamaClient = axios.create({
+      baseURL: OLLAMA_API_URL,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: 300000, // 5 minute timeout for LLM requests
+    })
+    
+    const response = await ollamaClient.post<OllamaQueryResponse>('/query', data)
+    return response.data
+  },
 }
 
 export interface AppUser {

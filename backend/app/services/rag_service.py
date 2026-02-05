@@ -17,26 +17,33 @@ class RAGService:
     """RAG service for generating source-grounded responses"""
     
     def __init__(self):
-        self.embedding_service = EmbeddingService()
-        self.vector_store = VectorStore()
+        try:
+            self.embedding_service = EmbeddingService()
+        except Exception as e:
+            logger.error(f"Failed to initialize EmbeddingService: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize embedding service: {str(e)}")
+        
+        try:
+            self.vector_store = VectorStore()
+        except Exception as e:
+            logger.error(f"Failed to initialize VectorStore: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize vector store: {str(e)}")
+        
         self._llm_client = None
         self._initialize_llm()
     
     def _initialize_llm(self):
-        """Initialize LLM client"""
-        if settings.LLM_PROVIDER.lower() == "openai" and settings.OPENAI_API_KEY:
-            import openai
-            openai.api_key = settings.OPENAI_API_KEY
-            self._llm_client = "openai"
-        elif settings.LLM_PROVIDER.lower() == "anthropic" and settings.ANTHROPIC_API_KEY:
+        """Initialize LLM client - Claude only"""
+        if settings.LLM_PROVIDER.lower() == "anthropic" and settings.ANTHROPIC_API_KEY:
             try:
                 import anthropic
                 self._llm_client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+                logger.info("RAG service initialized with Claude")
             except ImportError:
-                logger.warning("Anthropic SDK not installed, falling back to OpenAI or chunks only")
+                logger.error("Anthropic SDK not installed. Install with: pip install anthropic")
                 self._llm_client = None
         else:
-            logger.warning("No LLM provider configured, RAG will only return retrieved chunks")
+            logger.warning("Claude not configured. RAG will only return retrieved chunks. Set LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY in .env")
             self._llm_client = None
     
     def query(
@@ -44,8 +51,10 @@ class RAGService:
         question: str, 
         case_id: int,
         tenant_id: int = None,
+        document_id: int = None,
         top_k: int = 5,
-        max_citations: int = 5
+        max_citations: int = 5,
+        intent: str = None
     ) -> Dict:
         """
         Query the RAG system with a question (tenant-isolated)
@@ -54,6 +63,7 @@ class RAGService:
             question: User's question
             case_id: Case ID to filter documents
             tenant_id: Tenant ID for multi-tenant isolation
+            document_id: Optional document ID to filter by specific document
             top_k: Number of chunks to retrieve
             max_citations: Maximum number of citations to include
         
@@ -63,23 +73,42 @@ class RAGService:
         # Generate query embedding
         query_embedding = self.embedding_service.embed_text(question)
         
-        # Search vector store with case and tenant filter
+        # Search vector store with case, tenant, and document filter
         filter_metadata = {}
         if settings.CASE_ISOLATION_ENABLED:
             filter_metadata["case_id"] = case_id
         if tenant_id is not None:
             filter_metadata["tenant_id"] = tenant_id
+        if document_id is not None:
+            filter_metadata["document_id"] = document_id
         
         filter_metadata = filter_metadata if filter_metadata else None
+        
+        # Log search parameters for debugging
+        logger.info(f"RAG search - case_id: {case_id}, tenant_id: {tenant_id}, document_id: {document_id}, filter: {filter_metadata}, top_k: {top_k}")
+        
         retrieved_chunks = self.vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k,
             filter_metadata=filter_metadata
         )
         
+        logger.info(f"RAG search returned {len(retrieved_chunks)} chunks")
+        
         if not retrieved_chunks:
+            # Try searching without filters to see if there are any chunks at all
+            logger.warning(f"No chunks found with filters. Trying without filters to diagnose...")
+            all_chunks = self.vector_store.search(
+                query_embedding=query_embedding,
+                top_k=top_k,
+                filter_metadata=None
+            )
+            logger.info(f"Search without filters returned {len(all_chunks)} chunks")
+            if all_chunks:
+                logger.warning(f"Chunks exist but don't match case_id={case_id}. First chunk metadata: {all_chunks[0].get('metadata', {})}")
+            
             return {
-                "answer": "The provided documents do not contain sufficient information to answer this question.",
+                "answer": "The provided documents do not contain sufficient information to answer this question. The document may not be fully processed yet, or no matching content was found.",
                 "citations": [],
                 "confidence_score": None,
                 "retrieved_chunks": []
@@ -89,7 +118,8 @@ class RAGService:
         answer, citations = self._generate_grounded_answer(
             question=question,
             retrieved_chunks=retrieved_chunks,
-            max_citations=max_citations
+            max_citations=max_citations,
+            intent=intent
         )
         
         # Calculate confidence (simplified: based on retrieval scores)
@@ -97,7 +127,7 @@ class RAGService:
         
         return {
             "answer": answer,
-            "citations": citations[:max_citations],
+            "citations": [],  # Return empty array - page numbers are included in the answer
             "confidence_score": confidence_score,
             "retrieved_chunks": retrieved_chunks
         }
@@ -106,87 +136,57 @@ class RAGService:
         self, 
         question: str, 
         retrieved_chunks: List[Dict],
-        max_citations: int = 5
+        max_citations: int = 5,
+        intent: str = None
     ) -> tuple:
         """
         Generate answer using LLM with retrieved context
         
+        Args:
+            question: User's question
+            retrieved_chunks: List of retrieved document chunks
+            max_citations: Maximum number of citations
+            intent: Optional intent type (summarize_section, extract_facts, check_contradictions, general)
+        
         Returns:
-            Tuple of (answer, citations)
+            Tuple of (answer, citations) - citations will be empty, page numbers are in the answer
         """
         # Prepare context from retrieved chunks
         context_parts = []
-        citations = []
         
         for i, chunk in enumerate(retrieved_chunks[:max_citations]):
             content = chunk.get("content", "")
             metadata = chunk.get("metadata", {})
             
-            # Build citation
-            citation = {
-                "document_id": metadata.get("document_id"),
-                "document_name": metadata.get("document_name", "Unknown"),
-                "page_number": metadata.get("page_number"),
-                "paragraph_number": metadata.get("paragraph_number"),
-                "chunk_id": metadata.get("chunk_id"),
-                "quoted_text": content[:200] + "..." if len(content) > 200 else content,
-                "confidence": chunk.get("score")
-            }
-            citations.append(citation)
-            
-            # Add to context
-            context_parts.append(f"[Source {i+1} - {metadata.get('document_name', 'Document')}, Page {metadata.get('page_number', 'N/A')}]:\n{content}")
+            # Include page number in source label so LLM can reference it
+            page_num = metadata.get("page_number")
+            if page_num is not None:
+                context_parts.append(f"[Source {i+1} - {metadata.get('document_name', 'Document')}, Page {page_num}]:\n{content}")
+            else:
+                context_parts.append(f"[Source {i+1} - {metadata.get('document_name', 'Document')}]:\n{content}")
         
         context = "\n\n".join(context_parts)
         
-        # Build prompt with strict grounding instructions
-        prompt = f"""You are a legal AI assistant. Answer the question using ONLY the information provided in the sources below. 
-
-CRITICAL RULES:
-1. Only use information explicitly stated in the sources
-2. If the answer is not in the sources, say: "The provided documents do not contain sufficient information to answer this question."
-3. Cite specific sources using [Source X] format
-4. Do not infer, assume, or add information not in the sources
-5. If information is unclear or contradictory, state that clearly
-
-SOURCES:
+        # Build prompt that encourages inline citations with page numbers
+        prompt = f"""SOURCES:
 {context}
 
 QUESTION: {question}
 
-ANSWER (with citations in [Source X] format):"""
+Please provide a clear answer based on the sources above. When referencing specific information, include inline citations with the page number from the source (e.g., "as stated on page 3" or "see page 4-5"). Only reference page numbers that are explicitly shown in the source labels above.
 
-        # Generate answer using LLM
-        if self._llm_client == "openai":
-            answer = self._generate_openai(prompt)
-        elif self._llm_client and hasattr(self._llm_client, 'messages'):
+ANSWER:"""
+
+        # Generate answer using Claude
+        if self._llm_client and hasattr(self._llm_client, 'messages'):
             answer = self._generate_anthropic(prompt)
         else:
             # Fallback: return concatenated chunks
-            answer = f"Based on the retrieved documents:\n\n{context}\n\nNote: This is a summary of retrieved passages. For a more detailed answer, please configure an LLM provider."
-            return answer, citations
+            answer = f"Based on the retrieved documents:\n\n{context}\n\nNote: This is a summary of retrieved passages. For a more detailed answer, please configure Claude (set LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY in .env)."
+            return answer, []  # Return empty citations
         
-        return answer, citations
-    
-    def _generate_openai(self, prompt: str) -> str:
-        """Generate answer using OpenAI"""
-        try:
-            import openai
-            
-            response = openai.ChatCompletion.create(
-                model=settings.OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a legal AI assistant that provides accurate, source-grounded answers. Never hallucinate or make up information."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,  # Low temperature for accuracy
-                max_tokens=1000
-            )
-            
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"Error generating OpenAI response: {e}")
-            return "Error generating response. Please try again."
+        # Return empty citations array since we're including page numbers in the answer
+        return answer, []
     
     def _generate_anthropic(self, prompt: str) -> str:
         """Generate answer using Anthropic Claude"""
@@ -201,8 +201,18 @@ ANSWER (with citations in [Source X] format):"""
             )
             return response.content[0].text
         except Exception as e:
-            logger.error(f"Error generating Anthropic response: {e}")
-            return "Error generating response. Please try again."
+            error_details = str(e)
+            logger.error(f"Error generating Anthropic response: {e}", exc_info=True)
+            # Log more details about the error
+            if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                try:
+                    error_json = e.response.json()
+                    logger.error(f"Anthropic API error details: {error_json}")
+                    if 'error' in error_json and 'message' in error_json['error']:
+                        error_details = error_json['error']['message']
+                except:
+                    pass
+            return f"Error generating response: {error_details}. Please check the model name and API key."
     
     def _calculate_confidence(self, retrieved_chunks: List[Dict]) -> Dict:
         """Calculate confidence scores"""

@@ -565,35 +565,59 @@ class DocumentProcessor:
             """Find the page number for a given character position"""
             if not page_mapping:
                 return None
+            # Check each page range (end is exclusive, doesn't include separator)
             for page_info in page_mapping:
                 if page_info["start"] <= char_pos < page_info["end"]:
                     return page_info["page"]
+            # If position is in a separator between pages, return the page before separator
+            for i in range(len(page_mapping) - 1):
+                current_end = page_mapping[i]["end"]
+                next_start = page_mapping[i + 1]["start"]
+                if current_end <= char_pos < next_start:
+                    # In separator, return the page before the separator
+                    return page_mapping[i]["page"]
             # If position is beyond last page, return last page number
             if page_mapping and char_pos >= page_mapping[-1]["end"]:
                 return page_mapping[-1]["page"]
             return None
         
         if preserve_paragraphs:
-            # Split by paragraphs first
+            # Split by paragraphs and track exact positions in original text
             paragraphs = text.split('\n\n')
             current_chunk = ""
             current_start = 0
             chunk_index = 0
+            accumulated_pos = 0  # Track accumulated position in original text
             
             for para in paragraphs:
                 para = para.strip()
                 if not para:
+                    # Empty paragraph, account for \n\n separator
+                    accumulated_pos += 2
                     continue
+                
+                # Calculate exact start position in original text
+                # This is the position where this paragraph starts
+                para_start = accumulated_pos
                 
                 # If adding this paragraph would exceed chunk size, save current chunk
                 if current_chunk and len(current_chunk) + len(para) + 2 > chunk_size:
+                    # Calculate end position: start + length of current chunk
                     end_pos = current_start + len(current_chunk)
+                    page_num = find_page_number(current_start)
+                    # Validate page number is reasonable
+                    if page_num is not None and page_mapping:
+                        max_page = max(p["page"] for p in page_mapping)
+                        if page_num > max_page:
+                            logger.warning(f"Chunk {chunk_index} got page number {page_num} but max page is {max_page}. Using max page.")
+                            page_num = max_page
+                    
                     chunks.append({
                         "content": current_chunk.strip(),
                         "start_char": current_start,
                         "end_char": end_pos,
                         "chunk_index": chunk_index,
-                        "page_number": find_page_number(current_start)
+                        "page_number": page_num
                     })
                     chunk_index += 1
                     
@@ -601,42 +625,61 @@ class DocumentProcessor:
                     if chunk_overlap > 0 and current_chunk:
                         overlap_text = current_chunk[-chunk_overlap:]
                         current_chunk = overlap_text + "\n\n" + para
-                        current_start = current_start + len(current_chunk) - len(overlap_text) - len(para) - 2
+                        # New start is the position where overlap starts
+                        current_start = end_pos - chunk_overlap
                     else:
                         current_chunk = para
-                        current_start = len(text) - len(text[current_start:]) if chunks else 0
+                        current_start = para_start
+                    
+                    # Update accumulated position: para start + para length + separator
+                    accumulated_pos = para_start + len(para) + 2
                 else:
                     if current_chunk:
                         current_chunk += "\n\n" + para
                     else:
                         current_chunk = para
-                        if not chunks:
-                            current_start = 0
-                        else:
-                            # Calculate start position
-                            current_start = sum(len(c["content"]) for c in chunks)
+                        current_start = para_start
+                    
+                    # Update accumulated position: para start + para length + separator
+                    accumulated_pos = para_start + len(para) + 2
             
             # Add final chunk
             if current_chunk:
                 end_pos = current_start + len(current_chunk)
+                page_num = find_page_number(current_start)
+                # Validate page number is reasonable
+                if page_num is not None and page_mapping:
+                    max_page = max(p["page"] for p in page_mapping)
+                    if page_num > max_page:
+                        logger.warning(f"Final chunk {chunk_index} got page number {page_num} but max page is {max_page}. Using max page.")
+                        page_num = max_page
+                
                 chunks.append({
                     "content": current_chunk.strip(),
                     "start_char": current_start,
                     "end_char": end_pos,
                     "chunk_index": chunk_index,
-                    "page_number": find_page_number(current_start)
+                    "page_number": page_num
                 })
         else:
             # Simple character-based chunking
             for i in range(0, len(text), chunk_size - chunk_overlap):
                 chunk_text = text[i:i + chunk_size]
                 end_pos = min(i + len(chunk_text), len(text))
+                page_num = find_page_number(i)
+                # Validate page number is reasonable
+                if page_num is not None and page_mapping:
+                    max_page = max(p["page"] for p in page_mapping)
+                    if page_num > max_page:
+                        logger.warning(f"Chunk {len(chunks)} got page number {page_num} but max page is {max_page}. Using max page.")
+                        page_num = max_page
+                
                 chunks.append({
                     "content": chunk_text.strip(),
                     "start_char": i,
                     "end_char": end_pos,
                     "chunk_index": len(chunks),
-                    "page_number": find_page_number(i)
+                    "page_number": page_num
                 })
         
         return chunks

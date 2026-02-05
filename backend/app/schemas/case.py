@@ -83,7 +83,7 @@ class DocumentResponse(DocumentBase):
 
 class Citation(BaseModel):
     """Citation schema for source references"""
-    document_id: int
+    document_id: Optional[int] = None
     document_name: str
     page_number: Optional[int] = None
     paragraph_number: Optional[int] = None
@@ -100,6 +100,8 @@ class QueryRequest(BaseModel):
     case_id: int = Field(..., description="Case ID to query")
     query_type: Optional[str] = Field(None, description="Type of query: qa, summary, timeline, etc.")
     max_citations: int = Field(5, description="Maximum number of citations to return")
+    document_id: Optional[int] = Field(None, description="Optional document ID to analyze specifically")
+    show_sources: bool = Field(False, description="Whether to include sources array in the response")
 
 
 class QueryResponse(BaseModel):

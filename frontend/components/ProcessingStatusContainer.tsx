@@ -19,13 +19,6 @@ export default function ProcessingStatusContainer({
   processingDocuments,
   onDocumentStatusChange
 }: ProcessingStatusContainerProps) {
-  useEffect(() => {
-    console.log('ProcessingStatusContainer render, documents size:', processingDocuments.size)
-    if (processingDocuments.size > 0) {
-      console.log('Processing documents:', Array.from(processingDocuments.keys()))
-    }
-  }, [processingDocuments])
-  
   const handleClose = () => {
     // Clear all processed/error documents, keep only processing ones
     processingDocuments.forEach((item, id) => {
@@ -44,18 +37,9 @@ export default function ProcessingStatusContainer({
     }
   }
 
-  // Debug logging
-  useEffect(() => {
-    console.log('ProcessingStatusContainer: size check', processingDocuments.size)
-    console.log('ProcessingStatusContainer: should render?', processingDocuments.size > 0)
-  }, [processingDocuments])
-
   if (processingDocuments.size === 0) {
-    console.log('ProcessingStatusContainer: Returning null (size is 0)')
     return null
   }
-
-  console.log('ProcessingStatusContainer: Rendering ProcessingStatusCard')
   return (
     <ProcessingStatusCard
       processingDocuments={processingDocuments}

@@ -48,7 +48,7 @@ export default function CasePage() {
   useEffect(() => {
     loadCaseData()
     loadDocuments()
-    loadQueries()
+    loadQueries() // Always try to load queries - loadQueries will check if cleared internally
   }, [caseIdParam])
 
   // Auto-select first document when documents are loaded and no document is selected
@@ -154,7 +154,8 @@ export default function CasePage() {
       // Only load queries for numeric case IDs (backend doesn't support UUIDs yet)
       if (!isUuid && !isNaN(caseId as number)) {
         const response = await queriesApi.list(caseId as number)
-        setQueries(response.data || [])
+        const allQueries = response.data || []
+        setQueries(allQueries)
       } else {
         // For UUID cases, queries aren't supported yet
         setQueries([])
@@ -163,6 +164,46 @@ export default function CasePage() {
       console.error('Failed to load queries:', error)
       setQueries([])
     }
+  }
+
+  const handleClearChat = async () => {
+    // Permanently delete all queries for this case from the database
+    // They will not return even after logout/login or browser refresh
+    // Only queries saved as case notes will persist
+    try {
+      if (!isUuid && !isNaN(caseId as number)) {
+        await queriesApi.deleteAll(caseId as number)
+        // Clear the UI immediately
+        setQueries([])
+        // Remove any localStorage flags (no longer needed since we're deleting from DB)
+        if (typeof window !== 'undefined') {
+          const clearedKey = `clearedChat_${caseId}`
+          localStorage.removeItem(clearedKey)
+        }
+      } else {
+        // For UUID cases, just clear the UI
+        setQueries([])
+      }
+    } catch (error: any) {
+      console.error('Failed to clear chat:', error)
+      let errorMessage = 'Failed to clear chat'
+      if (error?.response?.data?.detail) {
+        errorMessage = typeof error.response.data.detail === 'string' 
+          ? error.response.data.detail 
+          : JSON.stringify(error.response.data.detail)
+      } else if (error?.message) {
+        errorMessage = error.message
+      }
+      alert(errorMessage)
+    }
+  }
+
+  // Load new queries after submission
+  const handleQuerySubmit = async () => {
+    // Wait a bit for the backend to save the query, then reload
+    setTimeout(async () => {
+      await loadQueries()
+    }, 500)
   }
 
   const handleFileUpload = async (file: File) => {
@@ -464,18 +505,7 @@ export default function CasePage() {
           
           {/* Toolbar - Right */}
           <div className="flex items-center gap-2">
-            <button
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Share"
-            >
-              <Share2 className="w-5 h-5 text-gray-600" />
-            </button>
-            <button
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title="AI Assistant"
-            >
-              <Wand2 className="w-5 h-5 text-gray-600" />
-            </button>
+            {/* Panel Toggle Icons - Only show when in documents view */}
             {activeView === 'notes' ? (
               <button
                 onClick={() => {
@@ -503,48 +533,27 @@ export default function CasePage() {
       {/* Main Content - Conditional based on activeView */}
       {activeView === 'documents' && (
         <div className="flex-1 flex overflow-hidden relative">
-          {/* Chat Panel Collapse Toggle Button - On left border, positioned outside panel */}
-          {!isChatPanelCollapsed && (
-            <button
-              onClick={() => setIsChatPanelCollapsed(!isChatPanelCollapsed)}
-              className="absolute top-1/2 z-20 bg-white border border-gray-300 rounded-r-lg p-1.5 shadow-md hover:bg-gray-50 transition-all duration-300"
-              style={{ 
-                transform: 'translateY(-50%)',
-                left: '0px'
-              }}
-              title="Collapse chat panel"
-            >
-              <ChevronLeft className="w-4 h-4 text-gray-600" />
-            </button>
-          )}
-          
           {/* Left Panel - Chat */}
           <div 
-            className={`border-r border-gray-200 flex flex-col transition-all duration-300 ${
+            className={`border-r border-gray-200 flex flex-col transition-all duration-300 relative ${
               isChatPanelCollapsed ? 'w-0 overflow-hidden' : ''
             }`}
             style={{ 
               width: isChatPanelCollapsed ? '0' : isDocumentViewerCollapsed ? '65%' : isDocumentListCollapsed ? '50%' : '30%' 
             }}
           >
-            <ChatInterface
-              caseId={isUuid ? 0 : (caseId as number)}
-              queries={queries}
-              onQuerySubmit={loadQueries}
-              selectedDocument={selectedDocument}
-            />
+            <div className="flex-1 overflow-hidden">
+              <ChatInterface
+                caseId={isUuid ? 0 : (caseId as number)}
+                queries={queries}
+                onQuerySubmit={handleQuerySubmit}
+                onClearChat={handleClearChat}
+                selectedDocument={selectedDocument}
+                isCollapsed={isChatPanelCollapsed}
+                onToggleCollapse={() => setIsChatPanelCollapsed(!isChatPanelCollapsed)}
+              />
+            </div>
           </div>
-          
-          {/* Chat Panel Expand Toggle Button - Show when collapsed */}
-          {isChatPanelCollapsed && (
-            <button
-              onClick={() => setIsChatPanelCollapsed(false)}
-              className="absolute top-1/2 -translate-y-1/2 left-0 z-10 bg-white border border-gray-300 rounded-r-lg p-1.5 shadow-md hover:bg-gray-50 transition-all duration-300"
-              title="Expand chat panel"
-            >
-              <ChevronRight className="w-4 h-4 text-gray-600" />
-            </button>
-          )}
 
           {/* Right Panel - Documents */}
           <div className="flex flex-col" style={{ 
@@ -559,118 +568,90 @@ export default function CasePage() {
             <div className="flex-1 overflow-hidden flex relative">
               {/* Document List */}
               <div 
-                className={`border-r border-gray-200 overflow-y-auto transition-all duration-300 ${
+                className={`border-r border-gray-200 flex flex-col transition-all duration-300 relative ${
                   isDocumentListCollapsed ? 'w-0 overflow-hidden' : ''
                 }`}
                 style={{ width: isDocumentListCollapsed ? '0' : isDocumentViewerCollapsed ? '100%' : '35.71%' }}
               >
-                <DocumentList
-                  documents={documents}
-                  selectedDocument={selectedDocument}
-                  isCollapsed={isDocumentListCollapsed}
-                  onToggleCollapse={() => {
-                    setIsDocumentListCollapsed(!isDocumentListCollapsed)
-                    // If collapsing list, expand viewer
-                    if (!isDocumentListCollapsed) {
-                      setIsDocumentViewerCollapsed(false)
-                    }
-                  }}
-                  onSelectDocument={(doc) => {
-                    setSelectedDocument(doc)
-                    // If document is processing, add to tracking
-                    if (doc.status === 'processing') {
-                      setProcessingDocuments(prev => {
-                        const newMap = new Map(prev)
-                        newMap.set(doc.id, {
-                          id: doc.id,
-                          document: doc,
-                          caseId: caseId
+                <div className="flex-1 overflow-y-auto">
+                  <DocumentList
+                    documents={documents}
+                    selectedDocument={selectedDocument}
+                    isCollapsed={isDocumentListCollapsed}
+                    onToggleCollapse={() => {
+                      setIsDocumentListCollapsed(!isDocumentListCollapsed)
+                      if (!isDocumentListCollapsed) {
+                        setIsDocumentViewerCollapsed(false)
+                      }
+                    }}
+                    chatPanelCollapsed={isChatPanelCollapsed}
+                    onToggleChatPanel={() => setIsChatPanelCollapsed(!isChatPanelCollapsed)}
+                    documentViewerCollapsed={isDocumentViewerCollapsed}
+                    onToggleDocumentViewer={() => {
+                      setIsDocumentViewerCollapsed(!isDocumentViewerCollapsed)
+                      if (!isDocumentViewerCollapsed) {
+                        setIsDocumentListCollapsed(false)
+                      }
+                    }}
+                    onSelectDocument={(doc) => {
+                      setSelectedDocument(doc)
+                      // If document is processing, add to tracking
+                      if (doc.status === 'processing') {
+                        setProcessingDocuments(prev => {
+                          const newMap = new Map(prev)
+                          newMap.set(doc.id, {
+                            id: doc.id,
+                            document: doc,
+                            caseId: caseId
+                          })
+                          return newMap
                         })
-                        return newMap
-                      })
-                    }
-                  }}
-                />
+                      }
+                    }}
+                  />
+                </div>
               </div>
-              
-              {/* Document List Collapse Toggle Button - Only show when viewer is visible */}
-              {!isDocumentViewerCollapsed && !isChatPanelCollapsed && (
-                <button
-                  onClick={() => {
-                    setIsDocumentListCollapsed(!isDocumentListCollapsed)
-                    // If collapsing list, ensure viewer is expanded
-                    if (!isDocumentListCollapsed) {
-                      setIsDocumentViewerCollapsed(false)
-                    }
-                  }}
-                  className="absolute top-1/2 -translate-y-1/2 z-10 bg-white border border-gray-300 rounded-r-lg p-1.5 shadow-md hover:bg-gray-50 transition-all duration-300"
-                  style={{ 
-                    transform: 'translateY(-50%)',
-                    left: isDocumentListCollapsed 
-                      ? '0' 
-                      : isChatPanelCollapsed 
-                        ? 'calc(50% - 1px)' 
-                        : 'calc(35.71% - 1px)'
-                  }}
-                  title={isDocumentListCollapsed ? 'Expand document list' : 'Collapse document list'}
-                >
-                  {isDocumentListCollapsed ? (
-                    <ChevronRight className="w-4 h-4 text-gray-600" />
-                  ) : (
-                    <ChevronLeft className="w-4 h-4 text-gray-600" />
-                  )}
-                </button>
-              )}
               
               {/* Document Viewer */}
               <div 
-                className={`overflow-y-auto transition-all duration-300 ${
+                className={`flex flex-col overflow-y-auto transition-all duration-300 relative ${
                   isDocumentViewerCollapsed ? 'w-0 overflow-hidden' : ''
                 }`}
                 style={{ width: isDocumentViewerCollapsed ? '0' : isDocumentListCollapsed ? '100%' : '64.29%' }}
               >
-                {selectedDocument ? (
-                  <DocumentViewer 
-                    document={selectedDocument} 
-                    onDocumentDeleted={() => {
-                      setSelectedDocument(null)
-                      loadDocuments()
-                    }}
-                  />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-gray-500">
-                    <div className="text-center">
-                      <FileText className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-                      <p>Select a document to view</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Document Viewer Collapse Toggle Button - Only show when list is visible */}
-              {!isDocumentListCollapsed && (
-                <button
-                  onClick={() => {
-                    setIsDocumentViewerCollapsed(!isDocumentViewerCollapsed)
-                    // If collapsing viewer, ensure list is expanded
-                    if (!isDocumentViewerCollapsed) {
-                      setIsDocumentListCollapsed(false)
-                    }
-                  }}
-                  className="absolute top-1/2 -translate-y-1/2 z-10 bg-white border border-gray-300 rounded-l-lg p-1.5 shadow-md hover:bg-gray-50 transition-all duration-300"
-                  style={{ 
-                    transform: 'translateY(-50%)',
-                    right: '0'
-                  }}
-                  title={isDocumentViewerCollapsed ? 'Expand document viewer' : 'Collapse document viewer'}
-                >
-                  {isDocumentViewerCollapsed ? (
-                    <ChevronLeft className="w-4 h-4 text-gray-600" />
+                <div className="flex-1 overflow-y-auto">
+                  {selectedDocument ? (
+                    <DocumentViewer 
+                      document={selectedDocument} 
+                      onDocumentDeleted={() => {
+                        setSelectedDocument(null)
+                        loadDocuments()
+                      }}
+                      isCollapsed={isDocumentViewerCollapsed}
+                      onToggleCollapse={() => {
+                        setIsDocumentViewerCollapsed(!isDocumentViewerCollapsed)
+                        if (!isDocumentViewerCollapsed) {
+                          setIsDocumentListCollapsed(false)
+                        }
+                      }}
+                      documentListCollapsed={isDocumentListCollapsed}
+                      onToggleDocumentList={() => {
+                        setIsDocumentListCollapsed(!isDocumentListCollapsed)
+                        if (!isDocumentListCollapsed) {
+                          setIsDocumentViewerCollapsed(false)
+                        }
+                      }}
+                    />
                   ) : (
-                    <ChevronRight className="w-4 h-4 text-gray-600" />
+                    <div className="h-full flex items-center justify-center text-gray-500">
+                      <div className="text-center">
+                        <FileText className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+                        <p>Select a document to view</p>
+                      </div>
+                    </div>
                   )}
-                </button>
-              )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

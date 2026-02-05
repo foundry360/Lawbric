@@ -12,12 +12,12 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:8001/",
+					"raw": "http://localhost:8002/",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
-					"port": "8001",
+					"port": "8002",
 					"path": [
 						""
 					]
@@ -47,12 +47,12 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:8001/query",
+					"raw": "http://localhost:8002/query",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
-					"port": "8001",
+					"port": "8002",
 					"path": [
 						"query"
 					]
@@ -82,12 +82,12 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:8001/query",
+					"raw": "http://localhost:8002/query",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
-					"port": "8001",
+					"port": "8002",
 					"path": [
 						"query"
 					]
@@ -117,12 +117,12 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:8001/query",
+					"raw": "http://localhost:8002/query",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
-					"port": "8001",
+					"port": "8002",
 					"path": [
 						"query"
 					]
@@ -152,17 +152,192 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:8001/query",
+					"raw": "http://localhost:8002/query",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
-					"port": "8001",
+					"port": "8002",
 					"path": [
 						"query"
 					]
 				},
 				"description": "Test with a longer, more complex question"
+			},
+			"response": []
+		},
+		{
+			"name": "Contradiction Detection - With Facts",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"prompt\": \"Analyze for contradictions\",\n  \"facts\": [\n    {\n      \"document_name\": \"Deposition Transcript\",\n      \"page\": 5,\n      \"text\": \"The incident occurred on March 15th at 3:00 PM.\"\n    },\n    {\n      \"document_name\": \"Email Correspondence\",\n      \"page\": 2,\n      \"text\": \"The incident occurred on March 16th at 2:00 PM.\"\n    },\n    {\n      \"document_name\": \"Police Report\",\n      \"page\": 1,\n      \"text\": \"The witness stated they were not present at the scene.\"\n    },\n    {\n      \"document_name\": \"Deposition Transcript\",\n      \"page\": 10,\n      \"text\": \"The witness confirmed they were present at the scene.\"\n    }\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8002/query",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8002",
+					"path": [
+						"query"
+					]
+				},
+				"description": "Test contradiction detection with a facts array. Should return 200 OK with contradiction results in response field."
+			},
+			"response": []
+		},
+		{
+			"name": "Contradiction Detection - Empty Facts",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"prompt\": \"Analyze for contradictions\",\n  \"facts\": []\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8002/query",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8002",
+					"path": [
+						"query"
+					]
+				},
+				"description": "Test with empty facts array. Should fall back to existing workflow (prompt-only mode)."
+			},
+			"response": []
+		},
+		{
+			"name": "Contradiction Detection - No Contradictions",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"prompt\": \"Analyze for contradictions\",\n  \"facts\": [\n    {\n      \"document_name\": \"Contract A\",\n      \"page\": 1,\n      \"text\": \"The contract was signed on January 1st.\"\n    },\n    {\n      \"document_name\": \"Contract A\",\n      \"page\": 2,\n      \"text\": \"The contract term is 12 months.\"\n    }\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8002/query",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8002",
+					"path": [
+						"query"
+					]
+				},
+				"description": "Test with facts that have no contradictions. Should return 'No contradictions found.'"
+			},
+			"response": []
+		},
+		{
+			"name": "Query Panel Test - Simple Legal Query",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"prompt\": \"What are the key facts mentioned in the documents?\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8002/query",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8002",
+					"path": [
+						"query"
+					]
+				},
+				"description": "Test query for Query Panel - Simple legal document analysis query. This is the type of query users would submit in the UI."
+			},
+			"response": []
+		},
+		{
+			"name": "Query Panel Test - With Document Context",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"prompt\": \"Extract all factual statements about dates and locations from the following document.\",\n  \"documents\": [\n    {\n      \"document_name\": \"Contract Agreement\",\n      \"text\": \"This agreement was signed on January 15th, 2024, at the office located at 123 Main Street, New York, NY. The contract term is 12 months, beginning on February 1st, 2024.\",\n      \"page\": 1\n    }\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8002/query",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8002",
+					"path": [
+						"query"
+					]
+				},
+				"description": "Test query with document context - simulates Query Panel with selected document excerpts."
 			},
 			"response": []
 		}
