@@ -5,6 +5,7 @@ RAG (Retrieval-Augmented Generation) service for grounded AI responses
 import logging
 from typing import List, Dict, Optional
 import json
+import re
 
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
@@ -127,10 +128,45 @@ class RAGService:
         
         return {
             "answer": answer,
-            "citations": [],  # Return empty array - page numbers are included in the answer
+            "citations": citations,  # Return citations with document names and page numbers
             "confidence_score": confidence_score,
-            "retrieved_chunks": retrieved_chunks
+            "retrieved_chunks": []  # Don't return chunks to frontend - they're only used internally
         }
+    
+    def _clean_chunk_content(self, content: str) -> str:
+        """Clean chunk content by normalizing whitespace and removing formatting artifacts"""
+        if not content:
+            return ""
+        
+        # First, detect if this looks like PDF extraction with one word per line
+        # Check if most lines are very short (1-3 words)
+        lines = content.split('\n')
+        short_lines = sum(1 for line in lines if line.strip() and len(line.strip().split()) <= 3)
+        total_lines = sum(1 for line in lines if line.strip())
+        
+        # If more than 70% of lines are short, likely PDF extraction issue
+        if total_lines > 0 and (short_lines / total_lines) > 0.7:
+            # Join all lines with spaces, then normalize
+            cleaned = ' '.join(line.strip() for line in lines if line.strip())
+            # Normalize multiple spaces
+            cleaned = re.sub(r' +', ' ', cleaned)
+            # Try to restore some paragraph structure by looking for sentence endings
+            # Add line breaks after periods followed by capital letters (likely new sentence)
+            cleaned = re.sub(r'\. ([A-Z])', r'.\n\n\1', cleaned)
+            # Clean up multiple newlines
+            cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+            return cleaned.strip()
+        
+        # Normal cleaning for properly formatted text
+        # Replace multiple newlines with double newline (paragraph break)
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        
+        # Normalize spaces
+        content = re.sub(r' +', ' ', content)  # Multiple spaces to single
+        content = re.sub(r'\n +', '\n', content)  # Spaces after newlines
+        content = re.sub(r' +\n', '\n', content)  # Spaces before newlines
+        
+        return content.strip()
     
     def _generate_grounded_answer(
         self, 
@@ -149,57 +185,142 @@ class RAGService:
             intent: Optional intent type (summarize_section, extract_facts, check_contradictions, general)
         
         Returns:
-            Tuple of (answer, citations) - citations will be empty, page numbers are in the answer
+            Tuple of (answer, citations) - citations with document names and page numbers
         """
-        # Prepare context from retrieved chunks
+        # Prepare context with proper source attribution
         context_parts = []
+        citations = []
         
-        for i, chunk in enumerate(retrieved_chunks[:max_citations]):
-            content = chunk.get("content", "")
+        # Group chunks by document to avoid mixing information
+        chunks_by_doc = {}
+        for chunk in retrieved_chunks[:max_citations]:
             metadata = chunk.get("metadata", {})
-            
-            # Include page number in source label so LLM can reference it
+            doc_id = metadata.get("document_id")
+            doc_name = metadata.get("document_name", "Unknown Document")
             page_num = metadata.get("page_number")
-            if page_num is not None:
-                context_parts.append(f"[Source {i+1} - {metadata.get('document_name', 'Document')}, Page {page_num}]:\n{content}")
-            else:
-                context_parts.append(f"[Source {i+1} - {metadata.get('document_name', 'Document')}]:\n{content}")
+            content = chunk.get("content", "").strip()
+            
+            if not content:
+                continue
+            
+            # Clean chunk content to fix formatting issues
+            content = self._clean_chunk_content(content)
+            
+            if not content:
+                continue
+                
+            # Group by document
+            if doc_id not in chunks_by_doc:
+                chunks_by_doc[doc_id] = {
+                    "document_name": doc_name,
+                    "document_id": doc_id,
+                    "chunks": []
+                }
+            
+            chunks_by_doc[doc_id]["chunks"].append({
+                "content": content,
+                "page_number": page_num
+            })
+        
+        # Build context with clear source attribution
+        for doc_id, doc_data in chunks_by_doc.items():
+            doc_name = doc_data["document_name"]
+            for chunk_data in doc_data["chunks"]:
+                content = chunk_data["content"]
+                page_num = chunk_data["page_number"]
+                
+                # Format with document name and page for clarity
+                if page_num is not None:
+                    context_parts.append(f"[{doc_name}, Page {page_num}]:\n{content}")
+                    # Create citation
+                    citations.append({
+                        "document_id": doc_id,
+                        "document_name": doc_name,
+                        "page_number": page_num,
+                        "quoted_text": content[:200] if len(content) > 200 else content,  # First 200 chars
+                        "confidence": None
+                    })
+                else:
+                    context_parts.append(f"[{doc_name}]:\n{content}")
+                    citations.append({
+                        "document_id": doc_id,
+                        "document_name": doc_name,
+                        "page_number": None,
+                        "quoted_text": content[:200] if len(content) > 200 else content,
+                        "confidence": None
+                    })
         
         context = "\n\n".join(context_parts)
         
-        # Build prompt that encourages inline citations with page numbers
-        prompt = f"""SOURCES:
+        # Build a structured prompt that ensures proper answering
+        prompt = f"""You are a legal research assistant. Answer the user's question using ONLY the information provided in the document excerpts below.
+
+DOCUMENT EXCERPTS:
 {context}
 
-QUESTION: {question}
+USER QUESTION: {question}
 
-Please provide a clear answer based on the sources above. When referencing specific information, include inline citations with the page number from the source (e.g., "as stated on page 3" or "see page 4-5"). Only reference page numbers that are explicitly shown in the source labels above.
+INSTRUCTIONS:
+- Answer the question DIRECTLY and COMPLETELY in the first sentence
+- Use ONLY the information from the excerpts - do not add external knowledge
+- If the excerpts don't contain enough information, state that clearly
+- When referencing information, mention the document name and page number naturally (e.g., "According to [Document Name, Page 3]...")
+- If information comes from multiple documents, clearly distinguish between them
+- Format your answer with proper paragraphs - do NOT just list raw text
+- Be specific and cite sources naturally within your answer
+- Do NOT repeat the question or add preamble - just provide the answer
 
 ANSWER:"""
 
         # Generate answer using Claude
-        if self._llm_client and hasattr(self._llm_client, 'messages'):
-            answer = self._generate_anthropic(prompt)
+        if self._llm_client:
+            try:
+                answer = self._generate_anthropic(prompt)
+                # Validate answer is not just raw chunks
+                if answer and len(answer) > 100 and not answer.startswith("Based on the retrieved documents"):
+                    # Answer looks good
+                    logger.info(f"Generated answer of length {len(answer)}")
+                else:
+                    logger.warning(f"Answer may be malformed: {answer[:100] if answer else 'None'}")
+            except Exception as e:
+                logger.error(f"Error generating answer with LLM: {e}", exc_info=True)
+                # Return a helpful error message instead of raw chunks
+                answer = f"I encountered an error while generating an answer. The relevant document excerpts were found, but I was unable to process them. Please try again or check the LLM configuration."
+                return answer, citations
         else:
-            # Fallback: return concatenated chunks
-            answer = f"Based on the retrieved documents:\n\n{context}\n\nNote: This is a summary of retrieved passages. For a more detailed answer, please configure Claude (set LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY in .env)."
-            return answer, []  # Return empty citations
+            # Fallback: return helpful message instead of raw chunks
+            logger.warning("LLM client not available, returning fallback message")
+            answer = f"I found relevant information in the documents, but I cannot generate a detailed answer because the AI model is not configured. Please configure Claude (set LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY in .env)."
+            return answer, citations
         
-        # Return empty citations array since we're including page numbers in the answer
-        return answer, []
+        return answer, citations
     
     def _generate_anthropic(self, prompt: str) -> str:
         """Generate answer using Anthropic Claude"""
         try:
+            logger.info(f"Calling Anthropic API with model {settings.ANTHROPIC_MODEL}")
             response = self._llm_client.messages.create(
                 model=settings.ANTHROPIC_MODEL,
-                max_tokens=1000,
-                temperature=0.1,
+                max_tokens=2000,
+                temperature=0.2,  # Lower temperature for more focused, factual responses
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
-            return response.content[0].text
+            
+            if not response.content or len(response.content) == 0:
+                logger.error("Anthropic API returned empty response")
+                raise ValueError("Empty response from Anthropic API")
+            
+            answer = response.content[0].text.strip()
+            
+            if not answer:
+                logger.error("Anthropic API returned empty answer text")
+                raise ValueError("Empty answer text from Anthropic API")
+            
+            logger.info(f"Successfully generated answer of length {len(answer)}")
+            return answer
+            
         except Exception as e:
             error_details = str(e)
             logger.error(f"Error generating Anthropic response: {e}", exc_info=True)
@@ -212,7 +333,8 @@ ANSWER:"""
                         error_details = error_json['error']['message']
                 except:
                     pass
-            return f"Error generating response: {error_details}. Please check the model name and API key."
+            # Re-raise to be handled by caller
+            raise RuntimeError(f"Failed to generate answer: {error_details}")
     
     def _calculate_confidence(self, retrieved_chunks: List[Dict]) -> Dict:
         """Calculate confidence scores"""

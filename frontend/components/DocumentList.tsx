@@ -240,9 +240,9 @@ export default function DocumentList({
     })
 
   return (
-    <div ref={containerRef} className="h-full bg-gray-50 flex flex-col">
+    <div ref={containerRef} className="h-full bg-primary-50 flex flex-col">
       {/* Documents Header */}
-      <div className="px-4 py-3 bg-white flex items-center justify-between h-[52px]">
+      <div className="px-4 py-3 bg-white flex items-center justify-between h-[52px] border-b border-gray-200">
         <div className="flex items-center gap-2">
           {/* Priority: Chat expand > Document Viewer expand > Documents collapse */}
           {chatPanelCollapsed && onToggleChatPanel ? (
@@ -328,9 +328,9 @@ export default function DocumentList({
                   isSelected ? 'bg-gray-100' : ''
                 }`}
                 style={{
-                  borderTopWidth: isSelected ? '4px' : '0px',
+                  borderTopWidth: isSelected ? '2px' : '0px',
                   borderTopStyle: 'solid',
-                  borderTopColor: isSelected ? '#000000' : 'transparent'
+                  borderTopColor: isSelected ? '#0284c7' : 'transparent'
                 }}
               >
                 <div className="flex items-start gap-3">

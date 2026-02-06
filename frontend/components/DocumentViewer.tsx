@@ -4,7 +4,16 @@ import { useState, useEffect } from 'react'
 import { Document, documentsApi } from '@/lib/api'
 import { FileText, Calendar, User, Hash, MoreVertical, X, Eye, AlertCircle, Loader2, ZoomIn, ZoomOut, Download, Printer, Maximize2, Minimize2, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { format } from 'date-fns'
-import AdobePDFViewer from './AdobePDFViewer'
+import dynamic from 'next/dynamic'
+
+const PDFJSViewer = dynamic(() => import('./PDFJSViewer'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+    </div>
+  ),
+})
 
 interface DocumentViewerProps {
   document: Document | { id: string | number; [key: string]: any } // Support both UUID and integer IDs
@@ -29,6 +38,23 @@ export default function DocumentViewer({ document, onDocumentDeleted, isCollapse
   const [previousStatus, setPreviousStatus] = useState<string | undefined>(document.status)
   const [textZoom, setTextZoom] = useState(100) // Zoom level for text documents (percentage)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // PDF viewer controls
+  const [pdfScale, setPdfScale] = useState(1.0)
+  const [pdfCurrentPage, setPdfCurrentPage] = useState(1)
+  const [pdfNumPages, setPdfNumPages] = useState<number | null>(null)
+
+  // Clear viewer if document is null or archived
+  useEffect(() => {
+    if (!document || document.is_archived) {
+      setPdfBlobUrl(null)
+      setPdfNumPages(null)
+      setPdfCurrentPage(1)
+      setExtractedText(null)
+      setContentError(null)
+      setShowMenu(false)
+      setShowArchiveModal(false)
+    }
+  }, [document?.id, document?.is_archived])
 
   // Auto-refresh when document status changes from processing to processed
   useEffect(() => {
@@ -81,10 +107,12 @@ export default function DocumentViewer({ document, onDocumentDeleted, isCollapse
             }
             
             const blob = await response.blob()
+            console.log('DocumentViewer: Received blob, size:', blob.size, 'type:', blob.type)
             if (blob.size === 0) {
               throw new Error('Document file is empty')
             }
             const blobUrl = URL.createObjectURL(blob)
+            console.log('DocumentViewer: Created blob URL:', blobUrl.substring(0, 50) + '...')
             setPdfBlobUrl(blobUrl)
             setContentError(null) // Clear any previous errors
           } catch (error: any) {
@@ -251,9 +279,15 @@ export default function DocumentViewer({ document, onDocumentDeleted, isCollapse
       }
       
       return (
-        <AdobePDFViewer
+        <PDFJSViewer
           pdfUrl={pdfBlobUrl}
           fileName={document.original_filename}
+          scale={pdfScale}
+          onScaleChange={setPdfScale}
+          currentPage={pdfCurrentPage}
+          onPageChange={setPdfCurrentPage}
+          numPages={pdfNumPages}
+          onNumPagesChange={setPdfNumPages}
         />
       )
     }
@@ -481,11 +515,25 @@ export default function DocumentViewer({ document, onDocumentDeleted, isCollapse
     )
   }
 
+  // Don't render if document is archived or null
+  if (!document || document.is_archived) {
+    return (
+      <div className="h-full bg-white flex flex-col w-full overflow-hidden">
+        <div className="flex-1 flex items-center justify-center text-gray-500">
+          <div className="text-center">
+            <FileText className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+            <p>Document has been archived</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="h-full bg-white flex flex-col w-full">
-      <div className="flex-1 flex flex-col min-w-0 w-full">
-        {/* Document Header */}
-        <div className="px-4 py-3 bg-white flex items-center justify-between h-[52px] flex-shrink-0">
+    <div className="h-full bg-white flex flex-col w-full overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 w-full overflow-y-auto">
+        {/* Document Header - Sticky */}
+        <div className="sticky top-0 z-20 px-4 py-3 bg-white flex items-center justify-between h-[52px] flex-shrink-0 border-b border-gray-200">
           <div className="flex items-center gap-2">
             {/* Show Document List expand button if Document List is collapsed, otherwise show Viewer collapse button if Viewer is open */}
             {documentListCollapsed && onToggleDocumentList ? (
@@ -541,26 +589,79 @@ export default function DocumentViewer({ document, onDocumentDeleted, isCollapse
             )}
           </div>
         </div>
-        {/* Document Metadata Bar */}
-        <div className="px-4 py-2 bg-white flex-shrink-0">
-          <div className="flex items-center gap-4 text-xs text-gray-600 flex-wrap">
-            <div className="flex items-center gap-2">
-              <FileText className="w-3 h-3" />
-              <span>{document.file_type.toUpperCase()}</span>
-            </div>
-            {document.page_count && (
+        {/* Document Metadata Bar - Sticky below header */}
+        <div className="sticky top-[52px] z-10 px-4 py-2 bg-white flex-shrink-0">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-4 text-xs text-gray-600 flex-wrap">
               <div className="flex items-center gap-2">
-                <span>{document.page_count} pages</span>
+                <FileText className="w-3 h-3" />
+                <span>{document.file_type.toUpperCase()}</span>
+              </div>
+              {document.page_count && (
+                <div className="flex items-center gap-2">
+                  <span>{document.page_count} pages</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <Calendar className="w-3 h-3" />
+                <span>Uploaded {format(new Date(document.uploaded_at), 'MMM d, yyyy')}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Eye className="w-3 h-3" />
+                <span>{document.view_count || 0} views</span>
+              </div>
+            </div>
+            
+            {/* PDF Controls - only show for PDF files */}
+            {document.file_type?.toLowerCase() === 'pdf' && pdfNumPages && (
+              <div className="flex items-center gap-3">
+                {/* Zoom Controls */}
+                <div className="flex items-center gap-2 border-r border-gray-300 pr-3">
+                  <button
+                    onClick={() => setPdfScale(prev => Math.max(prev - 0.25, 0.5))}
+                    disabled={pdfScale <= 0.5}
+                    className="p-1.5 hover:bg-gray-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Zoom out"
+                  >
+                    <ZoomOut className="w-4 h-4 text-gray-700" />
+                  </button>
+                  <span className="text-xs text-gray-700 min-w-[50px] text-center">
+                    {Math.round(pdfScale * 100)}%
+                  </span>
+                  <button
+                    onClick={() => setPdfScale(prev => Math.min(prev + 0.25, 3.0))}
+                    disabled={pdfScale >= 3.0}
+                    className="p-1.5 hover:bg-gray-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Zoom in"
+                  >
+                    <ZoomIn className="w-4 h-4 text-gray-700" />
+                  </button>
+                </div>
+                
+                {/* Page Navigation */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPdfCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={pdfCurrentPage <= 1}
+                    className="p-1.5 hover:bg-gray-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Previous page"
+                  >
+                    <ChevronsLeft className="w-4 h-4 text-gray-700" />
+                  </button>
+                  <span className="text-xs text-gray-700 min-w-[80px] text-center">
+                    Page {pdfCurrentPage} of {pdfNumPages}
+                  </span>
+                  <button
+                    onClick={() => setPdfCurrentPage(prev => Math.min(pdfNumPages || 1, prev + 1))}
+                    disabled={pdfCurrentPage >= (pdfNumPages || 1)}
+                    className="p-1.5 hover:bg-gray-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Next page"
+                  >
+                    <ChevronsRight className="w-4 h-4 text-gray-700" />
+                  </button>
+                </div>
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <Calendar className="w-3 h-3" />
-              <span>Uploaded {format(new Date(document.uploaded_at), 'MMM d, yyyy')}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Eye className="w-3 h-3" />
-              <span>{document.view_count || 0} views</span>
-            </div>
           </div>
         </div>
 
@@ -666,15 +767,61 @@ export default function DocumentViewer({ document, onDocumentDeleted, isCollapse
                   if (archiveConfirmText.toLowerCase() === 'archive') {
                     setIsArchiving(true)
                     try {
-                      // Archive document via API (supports both UUID and numeric IDs)
+                      // Step 1: Find and cleanup PDF viewer before archiving
+                      try {
+                        const pdfViewerContainer = document.querySelector('[data-pdf-viewer="true"]')
+                        if (pdfViewerContainer) {
+                          const scrollContainer = pdfViewerContainer.querySelector('.overflow-auto')
+                          if (scrollContainer && (scrollContainer as any).cleanupPDF) {
+                            console.log('DocumentViewer: Cleaning up PDF viewer before archive')
+                            (scrollContainer as any).cleanupPDF()
+                          }
+                        }
+                      } catch (e) {
+                        console.warn('Error finding PDF viewer for cleanup:', e)
+                      }
+                      
+                      // Step 2: Clear all PDF-related state to stop PDF viewer
+                      const blobUrlToRevoke = pdfBlobUrl
+                      setPdfBlobUrl(null)
+                      setPdfNumPages(null)
+                      setPdfCurrentPage(1)
+                      setContentError(null)
+                      
+                      // Step 3: Wait for cleanup and state changes
+                      await new Promise(resolve => setTimeout(resolve, 400))
+                      
+                      // Step 4: Revoke blob URL
+                      if (blobUrlToRevoke) {
+                        try {
+                          URL.revokeObjectURL(blobUrlToRevoke)
+                        } catch (e) {
+                          // Ignore - URL might already be revoked
+                        }
+                      }
+                      
+                      // Step 5: Archive document
                       const docId = document.id
                       await documentsApi.archive(docId)
                       
+                      // Clear all viewer state immediately
+                      setPdfBlobUrl(null)
+                      setPdfNumPages(null)
+                      setPdfCurrentPage(1)
+                      setExtractedText(null)
+                      setContentError(null)
+                      
                       setShowArchiveModal(false)
                       setArchiveConfirmText('')
+                      
+                      // Notify parent to clear selected document IMMEDIATELY (before loadDocuments)
                       if (onDocumentDeleted) {
                         onDocumentDeleted()
                       }
+                      
+                      // Force a re-render by updating document status locally
+                      // This ensures the component knows the document is archived
+                      // The parent will update the document list, but we need immediate feedback
                     } catch (error: any) {
                       console.error('Failed to archive document:', error)
                       // Extract error message properly

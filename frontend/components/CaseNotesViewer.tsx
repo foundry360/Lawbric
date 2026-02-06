@@ -293,9 +293,9 @@ export default function CaseNotesViewer({ caseId, caseData }: CaseNotesViewerPro
                         isSelected ? 'bg-gray-100' : 'bg-white'
                       }`}
                     style={{
-                      borderTopWidth: isSelected ? '4px' : '0px',
+                      borderTopWidth: isSelected ? '2px' : '0px',
                       borderTopStyle: 'solid',
-                      borderTopColor: isSelected ? '#000000' : 'transparent'
+                      borderTopColor: isSelected ? '#0284c7' : 'transparent'
                     }}
                   >
                     <div className="flex items-start gap-3">
