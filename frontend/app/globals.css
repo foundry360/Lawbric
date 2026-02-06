@@ -298,25 +298,26 @@ select:active {
   background-color: #f3f4f6 !important;
 }
 
-/* Adobe PDF Viewer - White background and page borders */
-[id*="adobe-pdf-viewer"],
-[id*="adobe-pdf-viewer"] > div,
-[id*="adobe-pdf-viewer"] iframe,
-[id*="adobe-pdf-viewer"] [class*="adobe"],
-[id*="adobe-pdf-viewer"] [class*="viewer"] {
+/* PDF.js Viewer - Match panel background color (white) */
+.react-pdf__Page {
   background-color: #ffffff !important;
+  background: #ffffff !important;
 }
 
-/* Light gray border for each PDF page */
-[id*="adobe-pdf-viewer"] canvas,
-[id*="adobe-pdf-viewer"] [class*="page"],
-[id*="adobe-pdf-viewer"] [data-page],
-[id*="adobe-pdf-viewer"] [class*="Page"],
-[id*="adobe-pdf-viewer"] div[style*="page"] {
-  border: 1px solid #e5e7eb !important;
-  margin: 8px auto !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+.react-pdf__Page__canvas {
   background-color: #ffffff !important;
+  background: #ffffff !important;
+}
+
+.react-pdf__Document {
+  background-color: #ffffff !important;
+  background: #ffffff !important;
+}
+
+/* Ensure PDF.js viewer container has white background */
+[class*="react-pdf"] {
+  background-color: #ffffff !important;
+  background: #ffffff !important;
 }
 
 /* Custom scrollbar - consistent styling throughout platform */

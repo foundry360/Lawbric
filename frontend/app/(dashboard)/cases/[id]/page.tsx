@@ -114,9 +114,19 @@ export default function CasePage() {
           requires_ocr: doc.requires_ocr || false,
           view_count: doc.view_count || 0,
           error_message: doc.error_message || undefined,
+          is_archived: doc.is_archived || false,
+          archived_at: doc.archived_at || undefined,
           metadata: doc.metadata || {}
         }))
         setDocuments(loadedDocs)
+        
+        // Clear selected document if it's archived or no longer in the list
+        if (selectedDocument) {
+          const foundDoc = loadedDocs.find((doc: any) => doc.id === selectedDocument.id)
+          if (!foundDoc || foundDoc.is_archived) {
+            setSelectedDocument(null)
+          }
+        }
         
         // Track processing documents - merge with existing to avoid overwriting
         setProcessingDocuments(prev => {
@@ -620,11 +630,14 @@ export default function CasePage() {
                 style={{ width: isDocumentViewerCollapsed ? '0' : isDocumentListCollapsed ? '100%' : '64.29%' }}
               >
                 <div className="flex-1 overflow-y-auto">
-                  {selectedDocument ? (
+                  {selectedDocument && !selectedDocument.is_archived ? (
                     <DocumentViewer 
+                      key={selectedDocument.id} // Force remount when document changes
                       document={selectedDocument} 
                       onDocumentDeleted={() => {
+                        // Clear selection IMMEDIATELY - this will hide DocumentViewer right away
                         setSelectedDocument(null)
+                        // Then reload documents list (this will update the list, but viewer is already hidden)
                         loadDocuments()
                       }}
                       isCollapsed={isDocumentViewerCollapsed}

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { queriesApi, caseNotesApi, ollamaApi, Query, Citation, OllamaQueryResponse } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
-import { Send, FileText, MessageSquare, Pin, MoreVertical, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { Send, MessageSquare, Pin, MoreVertical, ChevronsLeft, ChevronsRight } from 'lucide-react'
 
 interface ChatInterfaceProps {
   caseId: number
@@ -186,7 +186,7 @@ export default function ChatInterface({
   return (
     <div className="h-full flex flex-col bg-white">
       {/* Chat Header */}
-      <div className="px-4 py-3 flex items-center justify-between h-[52px]">
+      <div className="px-4 py-3 flex items-center justify-between h-[52px] border-b border-gray-200">
         <div className="flex items-center gap-2">
           {onToggleCollapse && !isCollapsed && (
             <button
@@ -270,38 +270,6 @@ export default function ChatInterface({
                   </button>
                 </div>
 
-                {/* Citations */}
-                {query.citations && query.citations.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-gray-200">
-                    <p className="text-sm font-semibold text-gray-700 mb-2">Sources:</p>
-                    <div className="space-y-2">
-                      {query.citations.map((citation: Citation, idx: number) => (
-                        <div
-                          key={idx}
-                          className="bg-white rounded p-2 text-sm border border-gray-200 hover:border-primary-300 cursor-pointer"
-                        >
-                          <div className="flex items-start gap-2">
-                            <FileText className="w-4 h-4 text-primary-600 mt-0.5 flex-shrink-0" />
-                            <div className="flex-1">
-                              <p className="font-medium text-gray-900">
-                                {citation.document_name}
-                              </p>
-                              {citation.page_number && (
-                                <p className="text-xs text-gray-600">
-                                  Page {citation.page_number}
-                                </p>
-                              )}
-                              <p className="text-xs text-gray-500 mt-1 line-clamp-2">
-                                "{citation.quoted_text}"
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
               </div>
             </div>
             ))}
@@ -331,7 +299,7 @@ export default function ChatInterface({
       </div>
 
       {/* Input */}
-      <div className="border-t border-gray-200 p-4 w-full box-border">
+      <div className="p-4 w-full box-border">
         <form ref={formRef} onSubmit={handleSubmit} className="relative w-full">
           <div className="relative flex-1 min-w-0" style={{ minWidth: 0, maxWidth: '100%', width: '100%' }}>
             <textarea

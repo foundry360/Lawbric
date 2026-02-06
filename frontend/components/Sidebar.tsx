@@ -4,7 +4,7 @@ import { useState, useEffect, memo } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import { useRouter, usePathname } from 'next/navigation'
-import { PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, LayoutDashboard, Briefcase, Sliders, FolderClosed, FolderOpen, Share2, ShieldCheck, Link as LinkIcon, Settings, Blocks, UserCog } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, LayoutDashboard, Briefcase, Sliders, FolderClosed, FolderOpen, Share2, ShieldCheck, Link as LinkIcon, Settings, Blocks, UserCog, MousePointer2 } from 'lucide-react'
 import { casesApi, queriesApi, Case, Query } from '@/lib/api'
 import { useDashboard } from '@/lib/dashboard-context'
 
@@ -15,7 +15,30 @@ function Sidebar() {
   
   // Check if user is super admin (Lawbric employee - internal admin portal access)
   const isSuperAdmin = user?.role === 'super_admin' || user?.role === 'SUPER_ADMIN'
-  const [isCollapsed, setIsCollapsed] = useState(false)
+  
+  // Sidebar mode: 'expanded' | 'collapsed' | 'hover'
+  type SidebarMode = 'expanded' | 'collapsed' | 'hover'
+  
+  // Load sidebar mode from localStorage, default to 'collapsed'
+  const loadSidebarMode = (): SidebarMode => {
+    if (typeof window === 'undefined') return 'collapsed'
+    try {
+      const saved = localStorage.getItem('sidebarMode')
+      if (saved && ['expanded', 'collapsed', 'hover'].includes(saved)) {
+        return saved as SidebarMode
+      }
+    } catch (e) {
+      console.warn('Failed to load sidebar mode from localStorage:', e)
+    }
+    return 'collapsed' // Default to collapsed
+  }
+  
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(loadSidebarMode)
+  const [isHovering, setIsHovering] = useState(false)
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false)
+  
+  // Calculate if sidebar should be collapsed based on mode and hover state
+  const isCollapsed = sidebarMode === 'collapsed' || (sidebarMode === 'hover' && !isHovering)
   // Load persisted expanded categories from localStorage
   const loadExpandedCategories = (): Set<string> => {
     if (typeof window === 'undefined') return new Set(['Cases'])
@@ -73,8 +96,22 @@ function Sidebar() {
     })
     .slice(0, 15) // Limit to 15 most recent
 
+  const handleModeChange = (mode: SidebarMode) => {
+    setSidebarMode(mode)
+    setShowSettingsMenu(false)
+    // Persist to localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('sidebarMode', mode)
+      } catch (e) {
+        console.warn('Failed to save sidebar mode to localStorage:', e)
+      }
+    }
+  }
+  
   const toggleCollapse = () => {
-    setIsCollapsed(!isCollapsed)
+    // Open settings menu instead of toggling
+    setShowSettingsMenu(!showSettingsMenu)
   }
 
   const toggleCategory = (category: string) => {
@@ -135,7 +172,11 @@ function Sidebar() {
 
 
   return (
-    <div className={`${isCollapsed ? 'w-24' : 'w-64'} bg-gray-100 text-gray-900 flex flex-col border-r border-gray-200 transition-all duration-300 relative`}>
+    <div 
+      className={`${isCollapsed ? 'w-24' : 'w-64'} bg-gray-100 text-gray-900 flex flex-col border-r border-gray-200 transition-all duration-300 relative`}
+      onMouseEnter={() => sidebarMode === 'hover' && setIsHovering(true)}
+      onMouseLeave={() => sidebarMode === 'hover' && setIsHovering(false)}
+    >
       <div className="p-6 pb-2">
         {/* Logo removed - now in header */}
       </div>
@@ -159,7 +200,7 @@ function Sidebar() {
             href="/workspace"
             className={`flex items-center px-3 py-1 mb-1 text-[12px] font-semibold uppercase tracking-wider ${
               pathname === '/workspace' 
-                ? 'text-[#000000] border-l-4 border-[#000000] bg-gray-200' 
+                ? 'text-[#000000] border-l-4 border-primary-600 bg-gray-200' 
                 : 'text-gray-500 hover:text-[#000000] hover:bg-gray-200 border-l-4 border-transparent'
             }`}
           >
@@ -185,7 +226,7 @@ function Sidebar() {
             href="/sharing"
             className={`flex items-center px-3 py-1 mb-1 text-[12px] font-semibold uppercase tracking-wider ${
               pathname === '/sharing' 
-                ? 'text-[#000000] border-l-4 border-[#000000] bg-gray-200' 
+                ? 'text-[#000000] border-l-4 border-primary-600 bg-gray-200' 
                 : 'text-gray-500 hover:text-[#000000] hover:bg-gray-200 border-l-4 border-transparent'
             }`}
           >
@@ -211,7 +252,7 @@ function Sidebar() {
             href="/vault"
             className={`flex items-center px-3 py-1 mb-1 text-[12px] font-semibold uppercase tracking-wider ${
               pathname === '/vault' 
-                ? 'text-[#000000] border-l-4 border-[#000000] bg-gray-200' 
+                ? 'text-[#000000] border-l-4 border-primary-600 bg-gray-200' 
                 : 'text-gray-500 hover:text-[#000000] hover:bg-gray-200 border-l-4 border-transparent'
             }`}
           >
@@ -262,7 +303,7 @@ function Sidebar() {
                         }}
                         className={`flex items-start gap-3 px-3 py-[6px] text-[12px] border-l-4 w-full text-left ${
                           isActive
-                            ? 'bg-gray-200 text-[#000000] border-l-4 border-[#000000]' 
+                            ? 'bg-gray-200 text-[#000000] border-l-4 border-primary-600' 
                             : 'text-[#000000] hover:bg-gray-200 border-transparent'
                         }`}
                       >
@@ -364,7 +405,7 @@ function Sidebar() {
                   href="/settings"
                   className={`flex items-center gap-3 px-3 py-1 mb-0.5 text-[12px] border-l-4 w-full ${
                     pathname === '/settings'
-                      ? 'bg-gray-200 text-[#000000] border-l-4 border-[#000000]' 
+                      ? 'bg-gray-200 text-[#000000] border-l-4 border-primary-600' 
                       : 'text-[#000000] hover:bg-gray-200 border-transparent'
                   }`}
                 >
@@ -375,7 +416,7 @@ function Sidebar() {
                   href="/connected-apps"
                   className={`flex items-center gap-3 px-3 py-1 mb-0.5 text-[12px] border-l-4 w-full ${
                     pathname === '/connected-apps'
-                      ? 'bg-gray-200 text-[#000000] border-l-4 border-[#000000]' 
+                      ? 'bg-gray-200 text-[#000000] border-l-4 border-primary-600' 
                       : 'text-[#000000] hover:bg-gray-200 border-transparent'
                   }`}
                 >
@@ -387,7 +428,7 @@ function Sidebar() {
                     href="/admin"
                     className={`flex items-center gap-3 px-3 py-1 mb-0.5 text-[12px] border-l-4 w-full ${
                       pathname === '/admin'
-                        ? 'bg-gray-200 text-[#000000] border-l-4 border-[#000000]' 
+                        ? 'bg-gray-200 text-[#000000] border-l-4 border-primary-600' 
                         : 'text-[#000000] hover:bg-gray-200 border-transparent'
                     }`}
                   >
@@ -401,7 +442,66 @@ function Sidebar() {
         )}
       </nav>
 
-      <div className={`p-4 border-t border-gray-200 ${isCollapsed ? 'px-2' : ''}`}>
+      <div className={`p-4 border-t border-gray-200 ${isCollapsed ? 'px-2' : ''} relative`}>
+        {/* Settings Menu - appears above toggle button */}
+        {showSettingsMenu && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setShowSettingsMenu(false)}
+            />
+            <div className="absolute bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-2 mb-2 bottom-20 left-4 right-4 min-w-[200px]">
+              <div className="text-xs font-semibold text-gray-700 px-2 py-1 mb-1">Sidebar Mode</div>
+              <button
+                onClick={() => handleModeChange('expanded')}
+                className={`w-full text-left px-3 py-2 text-xs rounded hover:bg-gray-100 transition-colors flex items-center gap-2 ${
+                  sidebarMode === 'expanded' ? 'bg-gray-100 text-black font-medium' : 'text-gray-700'
+                }`}
+              >
+                {sidebarMode === 'expanded' && (
+                  <div className="w-2 h-2 rounded-full bg-primary-600 flex-shrink-0"></div>
+                )}
+                {sidebarMode !== 'expanded' && (
+                  <div className="w-2 h-2 flex-shrink-0"></div>
+                )}
+                <PanelLeftOpen className="w-4 h-4" />
+                <span>Expanded</span>
+              </button>
+              <button
+                onClick={() => handleModeChange('collapsed')}
+                className={`w-full text-left px-3 py-2 text-xs rounded hover:bg-gray-100 transition-colors flex items-center gap-2 ${
+                  sidebarMode === 'collapsed' ? 'bg-gray-100 text-black font-medium' : 'text-gray-700'
+                }`}
+              >
+                {sidebarMode === 'collapsed' && (
+                  <div className="w-2 h-2 rounded-full bg-primary-600 flex-shrink-0"></div>
+                )}
+                {sidebarMode !== 'collapsed' && (
+                  <div className="w-2 h-2 flex-shrink-0"></div>
+                )}
+                <PanelLeftClose className="w-4 h-4" />
+                <span>Collapsed</span>
+              </button>
+              <button
+                onClick={() => handleModeChange('hover')}
+                className={`w-full text-left px-3 py-2 text-xs rounded hover:bg-gray-100 transition-colors flex items-center gap-2 ${
+                  sidebarMode === 'hover' ? 'bg-gray-100 text-black font-medium' : 'text-gray-700'
+                }`}
+              >
+                {sidebarMode === 'hover' && (
+                  <div className="w-2 h-2 rounded-full bg-primary-600 flex-shrink-0"></div>
+                )}
+                {sidebarMode !== 'hover' && (
+                  <div className="w-2 h-2 flex-shrink-0"></div>
+                )}
+                <MousePointer2 className="w-4 h-4" />
+                <span>Expand on Hover</span>
+              </button>
+            </div>
+          </>
+        )}
+        
+        {/* Toggle Button - opens settings menu */}
         <button
           onClick={toggleCollapse}
           className={`w-full flex items-center p-2 hover:bg-gray-200 text-[#000000] transition-colors ${
@@ -409,7 +509,7 @@ function Sidebar() {
               ? 'min-w-[32px] rounded-none justify-center' 
               : 'rounded-lg justify-end'
           }`}
-          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title="Sidebar settings"
         >
           {isCollapsed ? (
             <PanelLeftOpen className="w-5 h-5 flex-shrink-0" style={{ color: '#9ca3af' }} />
